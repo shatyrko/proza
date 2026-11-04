@@ -211,7 +211,8 @@ impl DocWindow {
         gtk::style_context_add_provider_for_display(
             &gdk::Display::default().expect("display"),
             &css,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+            // above the user's stylesheet, which may colour every selection
+            gtk::STYLE_PROVIDER_PRIORITY_USER + 1,
         );
 
         let me = Rc::new(DocWindow {
@@ -306,7 +307,7 @@ impl DocWindow {
             let weak = Rc::downgrade(&me);
             adw::StyleManager::default().connect_dark_notify(move |_| {
                 if let Some(me) = weak.upgrade() {
-                    me.apply_theme();
+                    me.apply_view_state();
                 }
             });
         }
@@ -386,9 +387,16 @@ impl DocWindow {
         let font = pango::FontDescription::from_string(if vs.mono { &s.mono_font } else { &s.font });
         let size = font.size() as f64 / pango::SCALE as f64 * vs.zoom;
         let family = font.family().map(|f| f.to_string()).unwrap_or_else(|| "Monospace".into());
+        // the selection: CotEditor's "system" themes keep the system's selection colour (here the user's GTK
+        // stylesheet); the others bring their own
+        let dark = adw::StyleManager::default().is_dark();
+        let selection = crate::theme::editor_colors(&crate::theme::counterpart(&vs.theme, dark))
+            .and_then(|c| c.selection.map(|bg| (bg, c.text)))
+            .map(|(bg, fg)| format!(".{} .proza-editor text selection {{ background-color: {bg}; color: {fg}; }}", self.cls))
+            .unwrap_or_default();
         self.css.load_from_string(&format!(
             ".{cls} .proza-editor {{ font-family: \"{family}\"; font-size: {size:.1}pt; line-height: {lh}; }}\n\
-             .{cls} .proza-editor gutter {{ font-family: \"{family}\"; font-size: {gsize:.1}pt; }}",
+             .{cls} .proza-editor gutter {{ font-family: \"{family}\"; font-size: {gsize:.1}pt; }}\n{selection}",
             cls = self.cls,
             lh = s.line_height,
             gsize = size * 0.9
@@ -725,7 +733,7 @@ impl DocWindow {
         self.add_action("reset-zoom", |me| me.zoom(0.0));
         self.add_radio("theme", &s.theme, |me, v| {
             me.vs.borrow_mut().theme = v;
-            me.apply_theme();
+            me.apply_view_state();
         });
         self.add_radio("tab-width", &s.tab_width.to_string(), |me, v| {
             me.vs.borrow_mut().tab_width = v.parse().unwrap_or(4);
