@@ -2,6 +2,7 @@
 
 mod app;
 mod document;
+mod find;
 mod inspector;
 mod menu;
 mod settings;

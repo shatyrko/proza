@@ -18,6 +18,11 @@ const CSS: &str = "
 .proza-window .status-bar button { min-height: 20px; padding: 0 6px; font-weight: normal; }
 .proza-window .syntax-popup > button { border-radius: 999px; padding: 2px 12px; min-height: 30px; }
 .proza-window headerbar .circular { min-width: 34px; min-height: 34px; }
+.find-panel .find-field-frame { border: 1px solid alpha(currentColor, 0.15); border-radius: 7px; }
+.find-panel .find-field-frame:focus-within { outline: 2px solid alpha(@accent_color, 0.5); outline-offset: 1px; }
+.find-panel .find-field, .find-panel .find-field text { background: transparent; }
+.find-panel .history-button { min-height: 24px; min-width: 24px; padding: 2px; margin: 4px; }
+.find-panel .help-button { min-width: 22px; min-height: 22px; padding: 0; }
 ";
 
 /// Puts the bundled themes and icons in place and loads the stylesheet. Runs once at start-up.
@@ -42,7 +47,7 @@ macro_rules! icons {
 }
 const ICONS: &[(&str, &str)] = icons![
     "proza-updown-symbolic", "proza-info-symbolic", "proza-split-add-symbolic", "proza-not-editable-symbolic",
-    "proza-sidebar-symbolic",
+    "proza-sidebar-symbolic", "proza-clear-symbolic",
 ];
 
 fn install_icons() {

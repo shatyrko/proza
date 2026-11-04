@@ -301,6 +301,15 @@ impl DocWindow {
                 });
             }
         }
+        {
+            // the Find panel acts on the last active document window
+            let weak = Rc::downgrade(&me);
+            win.connect_is_active_notify(move |win| {
+                if let (true, Some(me)) = (win.is_active(), weak.upgrade()) {
+                    crate::find::set_target(&me);
+                }
+            });
+        }
         me.install_actions();
         me.fill_dynamic_menus();
         me.apply_view_state();
@@ -805,6 +814,7 @@ impl DocWindow {
             }
         });
         crate::textcmd::install(self);
+        crate::find::install(self);
     }
 
     fn zoom(&self, factor: f64) {
