@@ -11,7 +11,7 @@ use adw::prelude::*;
 use gtk::{gdk, gio, glib, pango};
 use sourceview5::prelude::*;
 use std::cell::{Cell, RefCell};
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// General (prose) syntaxes use the standard font, everything else the monospaced one (CotEditor's syntax kinds).
@@ -57,7 +57,9 @@ pub struct DocWindow {
     pub editors: RefCell<Vec<EditorPane>>,
     pub doc: RefCell<DocState>,
     pub vs: RefCell<ViewState>,
-    title: adw::WindowTitle,
+    title: gtk::Label,
+    cls: String,
+    brace_id: RefCell<Option<glib::SourceId>>,
     syntax_label: gtk::Label,
     counts: gtk::Label,
     size: gtk::Label,
@@ -76,12 +78,14 @@ pub struct DocWindow {
 }
 
 thread_local! {
-    static WINDOWS: RefCell<Vec<Weak<DocWindow>>> = const { RefCell::new(Vec::new()) };
+    /// Owns every open document window's state; an entry is dropped when its window is destroyed.
+    static WINDOWS: RefCell<Vec<Rc<DocWindow>>> = const { RefCell::new(Vec::new()) };
+    static NEXT_ID: Cell<u32> = const { Cell::new(1) };
 }
 
 /// All open document windows.
 pub fn all() -> Vec<Rc<DocWindow>> {
-    WINDOWS.with(|w| w.borrow().iter().filter_map(Weak::upgrade).collect())
+    WINDOWS.with(|w| w.borrow().clone())
 }
 
 fn updown_button(label: &gtk::Label) -> gtk::Box {
@@ -100,6 +104,9 @@ impl DocWindow {
         let s = settings::get();
         let win = adw::ApplicationWindow::builder().application(app).default_width(640).default_height(720).build();
         win.add_css_class("proza-window");
+        // the font stylesheet is per window: each window gets its own class to scope it
+        let cls = format!("proza-w{}", NEXT_ID.with(|n| n.replace(n.get() + 1)));
+        win.add_css_class(&cls);
 
         // ---- title bar: menu · title · syntax popup · inspector
         let header = adw::HeaderBar::new();
@@ -111,8 +118,12 @@ impl DocWindow {
             .primary(true)
             .build();
         header.pack_start(&menu_btn);
-        let title = adw::WindowTitle::new("Untitled", "");
-        header.set_title_widget(Some(&title));
+        // CotEditor shows the document name left-aligned next to the window buttons
+        let title = gtk::Label::new(Some("Untitled"));
+        title.add_css_class("document-title");
+        title.set_ellipsize(pango::EllipsizeMode::Middle);
+        header.pack_start(&title);
+        header.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
         let inspector_btn = gtk::ToggleButton::builder()
             .icon_name("proza-info-symbolic")
             .tooltip_text("Show Inspector")
@@ -134,7 +145,7 @@ impl DocWindow {
 
         // ---- content: editor stack + status bar, inspector on the right
         let buffer = sourceview5::Buffer::new(None);
-        buffer.set_highlight_matching_brackets(s.highlight_braces);
+        buffer.set_highlight_matching_brackets(false);
         buffer.set_implicit_trailing_newline(false);
 
         let editors_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -228,6 +239,8 @@ impl DocWindow {
                 theme: s.theme.clone(),
             }),
             title,
+            cls,
+            brace_id: RefCell::new(None),
             syntax_label,
             counts,
             size,
@@ -244,12 +257,36 @@ impl DocWindow {
             monitor: RefCell::new(None),
             loading: Cell::new(false),
         });
-        WINDOWS.with(|w| w.borrow_mut().push(Rc::downgrade(&me)));
+        WINDOWS.with(|w| w.borrow_mut().push(me.clone()));
 
         let first = me.make_editor();
         editors_box.append(&first.root);
+        GtkWindowExt::set_focus(&win, Some(&first.view));
         me.editors.borrow_mut().push(first);
 
+        {
+            let css = me.css.clone();
+            win.connect_destroy(move |win| {
+                gtk::style_context_remove_provider_for_display(&gdk::Display::default().expect("display"), &css);
+                WINDOWS.with(|w| w.borrow_mut().retain(|d| &d.win != win));
+            });
+        }
+        // like CotEditor, the text keeps keyboard focus: closing a menu or pop-up returns it to the editor
+        for b in [&menu_btn, &syntax_btn, &enc_btn, &end_btn] {
+            b.set_focus_on_click(false);
+            if let Some(pop) = b.popover() {
+                let weak = Rc::downgrade(&me);
+                // after the menu button's own focus handling, which would otherwise keep the focus
+                pop.connect_closed(move |_| {
+                    let weak = weak.clone();
+                    glib::idle_add_local_once(move || {
+                        if let Some(me) = weak.upgrade() {
+                            me.view().grab_focus();
+                        }
+                    });
+                });
+            }
+        }
         me.install_actions();
         me.fill_dynamic_menus();
         me.apply_view_state();
@@ -285,7 +322,7 @@ impl DocWindow {
         view.set_smart_home_end(sourceview5::SmartHomeEndType::Before);
         view.set_top_margin(6);
         view.set_bottom_margin(6);
-        view.set_left_margin(4);
+        view.set_left_margin(12);
         view.set_right_margin(4);
         view.set_right_margin_position(settings::get().page_guide_column);
         let scroller = gtk::ScrolledWindow::builder().child(&view).vexpand(true).hexpand(true).build();
@@ -340,9 +377,11 @@ impl DocWindow {
         let size = font.size() as f64 / pango::SCALE as f64 * vs.zoom;
         let family = font.family().map(|f| f.to_string()).unwrap_or_else(|| "Monospace".into());
         self.css.load_from_string(&format!(
-            ".proza-editor {{ font-family: \"{family}\"; font-size: {size:.1}pt; line-height: {lh}; }}\n\
-             .proza-editor gutter {{ font-family: \"{family}\"; font-size: {size:.1}pt; }}",
-            lh = s.line_height
+            ".{cls} .proza-editor {{ font-family: \"{family}\"; font-size: {size:.1}pt; line-height: {lh}; }}\n\
+             .{cls} .proza-editor gutter {{ font-family: \"{family}\"; font-size: {gsize:.1}pt; }}",
+            cls = self.cls,
+            lh = s.line_height,
+            gsize = size * 0.9
         ));
         for e in self.editors.borrow().iter() {
             let v = &e.view;
@@ -372,6 +411,9 @@ impl DocWindow {
         let name = crate::theme::counterpart(&self.vs.borrow().theme, dark);
         let scheme = sourceview5::StyleSchemeManager::default().scheme(&crate::theme::scheme_id(&name));
         self.buffer.set_style_scheme(scheme.as_ref());
+        if let Some(tag) = self.buffer.tag_table().lookup("proza-brace") {
+            self.style_brace_tag(&tag);
+        }
     }
 
     // ------------------------------------------------------------------ syntax
@@ -404,6 +446,14 @@ impl DocWindow {
         } else {
             String::new()
         };
+        // Proza's own syntaxes win over the built-in ones that claim the same files (SVG over XML)
+        let lower = name.to_lowercase();
+        for (id, _) in crate::app::LANGUAGES {
+            let globs = lm.language(id).map(|l| l.globs()).unwrap_or_default();
+            if globs.iter().any(|g| g.strip_prefix('*').is_some_and(|ext| lower.ends_with(&ext.to_lowercase()))) {
+                return id.to_string();
+            }
+        }
         lm.guess_language(Some(name), if ctype.is_empty() { None } else { Some(ctype.as_str()) })
             .map(|l| l.id().to_string())
             .unwrap_or_default()
@@ -754,6 +804,8 @@ impl DocWindow {
             if mark.name().as_deref() == Some("insert") || mark.name().as_deref() == Some("selection_bound") {
                 if let Some(me) = weak.upgrade() {
                     me.schedule_status();
+                    // a cursor move sets "insert" first and "selection_bound" second: only then is it not a selection
+                    me.flash_brace();
                 }
             }
         });
@@ -783,6 +835,55 @@ impl DocWindow {
                 me.schedule_autosave();
             }
         });
+    }
+
+    /// CotEditor marks the brace matching the one just before the cursor, only for a moment.
+    fn flash_brace(self: &Rc<Self>) {
+        let b = &self.buffer;
+        if !settings::get().highlight_braces || b.has_selection() || self.loading.get() {
+            return;
+        }
+        let cursor = b.iter_at_mark(&b.get_insert());
+        let mut before = cursor;
+        if !before.backward_char() {
+            return;
+        }
+        let Some(target) = matching_brace(&before) else { return };
+        let tag = self.brace_tag();
+        b.remove_tag(&tag, &b.start_iter(), &b.end_iter());
+        let mut end = target;
+        end.forward_char();
+        b.apply_tag(&tag, &target, &end);
+        if let Some(id) = self.brace_id.borrow_mut().take() {
+            id.remove();
+        }
+        let weak = Rc::downgrade(self);
+        let id = glib::timeout_add_local_once(std::time::Duration::from_millis(600), move || {
+            if let Some(me) = weak.upgrade() {
+                me.brace_id.borrow_mut().take();
+                let tag = me.brace_tag();
+                me.buffer.remove_tag(&tag, &me.buffer.start_iter(), &me.buffer.end_iter());
+            }
+        });
+        self.brace_id.replace(Some(id));
+    }
+
+    /// The tag for the brace flash, coloured by the theme's bracket-match style.
+    fn brace_tag(&self) -> gtk::TextTag {
+        let table = self.buffer.tag_table();
+        table.lookup("proza-brace").unwrap_or_else(|| {
+            let tag = gtk::TextTag::new(Some("proza-brace"));
+            table.add(&tag);
+            self.style_brace_tag(&tag);
+            tag
+        })
+    }
+
+    fn style_brace_tag(&self, tag: &gtk::TextTag) {
+        if let Some(style) = self.buffer.style_scheme().and_then(|sc| sc.style("bracket-match")) {
+            style.apply(tag);
+        }
+        tag.set_priority(self.buffer.tag_table().size() - 1);
     }
 
     fn schedule_status(self: &Rc<Self>) {
@@ -854,7 +955,7 @@ impl DocWindow {
         let d = self.doc.borrow();
         let name = d.file.as_ref().and_then(|f| f.basename()).map(|p| p.display().to_string()).unwrap_or_else(|| "Untitled".into());
         let edited = self.buffer.is_modified() && !(settings::get().auto_save && d.file.is_some());
-        self.title.set_title(&if edited { format!("{name} •") } else { name.clone() });
+        self.title.set_label(&if edited { format!("{name} •") } else { name.clone() });
         self.win.set_title(Some(&name));
     }
 
@@ -1218,7 +1319,7 @@ impl DocWindow {
         if has_file && settings::get().auto_save {
             return if self.write_file() { glib::Propagation::Proceed } else { glib::Propagation::Stop };
         }
-        let name = self.title.title();
+        let name = self.title.label();
         let dlg = adw::AlertDialog::new(
             Some(&format!("Do you want to save the changes made to the document “{}”?", name.trim_end_matches(" •"))),
             Some("Your changes will be lost if you don’t save them."),
@@ -1254,6 +1355,34 @@ impl DocWindow {
 }
 
 /// Lines as CotEditor counts them: the empty line after a final line ending doesn't count.
+/// The brace that pairs with the one at `at`: () [] {} — searched backward from a closing brace and forward from
+/// an opening one, nesting counted, at most 50,000 characters away.
+fn matching_brace(at: &gtk::TextIter) -> Option<gtk::TextIter> {
+    const PAIRS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
+    let c = at.char();
+    let (open, close, forward) = PAIRS
+        .iter()
+        .find_map(|&(o, cl)| if c == o { Some((o, cl, true)) } else if c == cl { Some((o, cl, false)) } else { None })?;
+    let mut it = *at;
+    let mut depth = 0usize;
+    for _ in 0..50_000 {
+        let moved = if forward { it.forward_char() } else { it.backward_char() };
+        if !moved || it.is_end() {
+            return None;
+        }
+        let ch = it.char();
+        if ch == (if forward { open } else { close }) {
+            depth += 1;
+        } else if ch == (if forward { close } else { open }) {
+            if depth == 0 {
+                return Some(it);
+            }
+            depth -= 1;
+        }
+    }
+    None
+}
+
 pub fn count_lines(text: &str) -> usize {
     if text.is_empty() {
         return 0;

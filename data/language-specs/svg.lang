@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CotEditor lists SVG as a syntax of its own; it is XML with its own name and file types. -->
+<language id="svg" name="SVG" version="2.0" _section="Markup">
+  <metadata>
+    <property name="mimetypes">image/svg+xml</property>
+    <property name="globs">*.svg;*.svgz</property>
+    <property name="block-comment-start">&lt;!--</property>
+    <property name="block-comment-end">--&gt;</property>
+  </metadata>
+  <definitions>
+    <context id="svg">
+      <include>
+        <context ref="xml:xml"/>
+      </include>
+    </context>
+  </definitions>
+</language>

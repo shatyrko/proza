@@ -10,7 +10,9 @@ const CSS: &str = "
 .proza-window .navigation-bar { min-height: 24px; padding: 0 4px; }
 .proza-window .navigation-bar button { min-height: 20px; min-width: 20px; padding: 0 2px; }
 .proza-window .navigation-bar .outline-popup { font-weight: 600; }
-.proza-window .status-bar { min-height: 25px; padding: 0 6px 0 10px; font-size: 0.85em;
+.proza-window .document-title { font-weight: 700; font-size: 1.1em; margin: 0 6px; }
+.proza-window .proza-editor gutter { padding-left: 10px; }
+.proza-window .status-bar { min-height: 28px; padding: 0 6px 0 14px; font-size: 0.92em;
     border-top: 1px solid alpha(currentColor, 0.12); }
 .proza-window .status-bar separator { margin: 5px 4px; }
 .proza-window .status-bar button { min-height: 20px; padding: 0 6px; font-weight: normal; }
@@ -23,6 +25,7 @@ pub fn startup() {
     sourceview5::init();
     crate::theme::install();
     install_icons();
+    install_languages();
     let css = gtk::CssProvider::new();
     css.load_from_string(CSS);
     gtk::style_context_add_provider_for_display(
@@ -53,6 +56,25 @@ fn install_icons() {
         }
     }
     gtk::IconTheme::for_display(&gdk::Display::default().expect("display")).add_search_path(&dir);
+}
+
+/// Proza's own syntax definitions (for syntaxes CotEditor has and GtkSourceView doesn't), in id order.
+pub const LANGUAGES: &[(&str, &str)] = &[("svg", include_str!("../data/language-specs/svg.lang"))];
+
+fn install_languages() {
+    let dir = glib::user_data_dir().join("proza").join("language-specs");
+    let _ = std::fs::create_dir_all(&dir);
+    for (id, xml) in LANGUAGES {
+        let path = dir.join(format!("{id}.lang"));
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(xml) {
+            let _ = std::fs::write(&path, xml);
+        }
+    }
+    let lm = sourceview5::LanguageManager::default();
+    let mut paths: Vec<String> = vec![dir.to_string_lossy().into_owned()];
+    paths.extend(lm.search_path().iter().map(|p| p.to_string()));
+    let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    lm.set_search_path(&refs);
 }
 
 /// The window a newly opened file goes to: the untouched blank window if there is one, else a new one.
