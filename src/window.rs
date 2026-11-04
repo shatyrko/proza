@@ -272,8 +272,16 @@ impl DocWindow {
             });
         }
         // like CotEditor, the text keeps keyboard focus: closing a menu or pop-up returns it to the editor
+        // (the bar buttons never take keyboard focus, as on macOS, so a closing dialog can't leave it on them)
+        for w in [inspector_btn.upcast_ref::<gtk::Widget>()] {
+            w.set_focusable(false);
+        }
         for b in [&menu_btn, &syntax_btn, &enc_btn, &end_btn] {
             b.set_focus_on_click(false);
+            b.set_focusable(false);
+            if let Some(inner) = b.first_child() {
+                inner.set_focusable(false);
+            }
             if let Some(pop) = b.popover() {
                 let weak = Rc::downgrade(&me);
                 // after the menu button's own focus handling, which would otherwise keep the focus
@@ -345,6 +353,8 @@ impl DocWindow {
             .action_name("win.split-editor")
             .build();
         flat(&split_btn);
+        split_btn.set_focusable(false);
+        close_btn.set_focusable(false);
         nav.append(&split_btn);
 
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
