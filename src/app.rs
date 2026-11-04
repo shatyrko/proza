@@ -55,6 +55,7 @@ pub fn startup() {
     sourceview5::init();
     crate::theme::install();
     crate::scripts::watch();
+    gtk::Window::set_default_icon_name("dev.alecsh.Proza");
     adw::StyleManager::default().set_color_scheme(match crate::settings::get().appearance.as_str() {
         "light" => adw::ColorScheme::ForceLight,
         "dark" => adw::ColorScheme::ForceDark,
@@ -194,7 +195,7 @@ pub fn install_actions(app: &adw::Application) {
     add("about", |app| {
         let about = adw::AboutDialog::builder()
             .application_name("Proza")
-            .application_icon("text-x-generic")
+            .application_icon("dev.alecsh.Proza")
             .version(env!("CARGO_PKG_VERSION"))
             .comments("A lightweight plain-text editor, modelled on CotEditor.")
             .website("https://github.com/shatyrko/proza")

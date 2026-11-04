@@ -43,6 +43,8 @@ pub struct Item {
     /// Char offsets of the title in the document (the range that gets selected).
     pub start: usize,
     pub end: usize,
+    /// Where the whole item begins (e.g. at "###" or "def"): the caret is in the item from here on.
+    pub anchor: usize,
     pub title: String,
     pub kind: Kind,
     /// Literal leading indentation (shown in the menu), or levels as nesting depth.
@@ -135,7 +137,7 @@ pub fn extract(lang: &str, text: &str) -> Vec<Item> {
     if lang.is_empty() {
         return Vec::new();
     }
-    let mut found: Vec<(usize, usize, Item)> = Vec::new(); // (byte start, byte end, item with byte offsets)
+    let mut found: Vec<(usize, usize, usize, Item)> = Vec::new(); // (byte anchor, start, end, item)
     for (rule, re) in RULES.iter().zip(compiled()) {
         if !(rule.langs.contains(&lang) || rule.langs == ["*"]) {
             continue;
@@ -153,7 +155,7 @@ pub fn extract(lang: &str, text: &str) -> Vec<Item> {
                     kind = Kind::Separator;
                 } else if caps.name("sep").is_some() {
                     let at = caps.get(0).map_or(t.start(), |m| m.start());
-                    found.push((at, at, Item { start: 0, end: 0, title: String::new(), kind: Kind::Separator, indent: String::new(), level: 0 }));
+                    found.push((at, at, at, Item { start: 0, end: 0, anchor: 0, title: String::new(), kind: Kind::Separator, indent: String::new(), level: 0 }));
                 }
             } else if title.is_empty() {
                 continue;
@@ -167,20 +169,28 @@ pub fn extract(lang: &str, text: &str) -> Vec<Item> {
                 Kind::Heading(Some(n)) => n as usize - 1,
                 _ => 0,
             };
-            found.push((bs, be, Item { start: 0, end: 0, title, kind, indent, level }));
+            let whole = caps.get(0).map_or(bs, |m| m.start());
+            let anchor = whole + (text[whole..bs].len() - text[whole..bs].trim_start().len());
+            found.push((anchor.min(bs), bs, be, Item { start: 0, end: 0, anchor: 0, title, kind, indent, level }));
         }
     }
-    found.sort_by_key(|(s, e, _)| (*s, *e));
-    found.dedup_by(|a, b| a.0 == b.0 && a.2.kind != Kind::Separator && b.2.kind != Kind::Separator);
+    found.sort_by_key(|(a, s, e, _)| (*a, *s, *e));
+    found.dedup_by(|a, b| a.1 == b.1 && a.3.kind != Kind::Separator && b.3.kind != Kind::Separator);
     // byte → char offsets, in one pass
     let mut items = Vec::with_capacity(found.len());
     let (mut byte, mut chars) = (0usize, 0usize);
     let mut advance = |to: usize| {
-        chars += text[byte..to].chars().count();
+        if to >= byte {
+            chars += text[byte..to].chars().count();
+        } else {
+            // overlapping matches: count again from the start
+            chars = text[..to].chars().count();
+        }
         byte = to;
         chars
     };
-    for (bs, be, mut item) in found {
+    for (ba, bs, be, mut item) in found {
+        item.anchor = advance(ba);
         item.start = advance(bs);
         item.end = advance(be);
         items.push(item);
@@ -196,7 +206,7 @@ fn strip_tags(s: &str) -> String {
 
 /// The item containing `offset`: the last non-separator item that starts at or before it.
 pub fn current(items: &[Item], offset: usize) -> Option<usize> {
-    items.iter().rposition(|i| i.kind != Kind::Separator && i.start <= offset)
+    items.iter().rposition(|i| i.kind != Kind::Separator && i.anchor <= offset)
 }
 
 /// Previous: the item before the one containing the selection start. Next: the first item if the selection ends
@@ -246,10 +256,10 @@ mod tests {
         let rs = "pub struct S;\nimpl Display for S {\n}\npub(crate) async fn go() {}\n";
         let titles: Vec<_> = extract("rust", rs).into_iter().map(|i| i.title).collect();
         assert_eq!(titles, vec!["S", "Display for S", "go"]);
-        assert_eq!(next(&items, 0), Some(0));
+        assert_eq!(next(&items, 0), Some(1));
         assert_eq!(next(&items, 6), Some(1));
         assert_eq!(previous(&items, 30), Some(0));
-        assert_eq!(current(&items, 0), None);
+        assert_eq!(current(&items, 0), Some(0));
         assert_eq!(current(&items, 6), Some(0));
     }
 }
