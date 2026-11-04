@@ -36,11 +36,60 @@ pub fn scheme_id(name: &str) -> String {
     id.trim_end_matches('-').to_string()
 }
 
+/// User themes (new ones and customized bundled ones) live in ~/.config/proza/themes as .cottheme files.
+pub fn user_dir() -> PathBuf {
+    gtk::glib::user_config_dir().join("proza").join("themes")
+}
+
+pub fn is_bundled(name: &str) -> bool {
+    BUNDLED.iter().any(|(n, _)| *n == name)
+}
+
+/// A bundled theme the user changed (Restore is offered).
+pub fn is_customized(name: &str) -> bool {
+    user_dir().join(format!("{name}.cottheme")).exists()
+}
+
+/// Bundled themes in CotEditor's order, then user themes by name.
+pub fn all_names() -> Vec<String> {
+    let mut names: Vec<String> = BUNDLED.iter().map(|(n, _)| n.to_string()).collect();
+    let mut user: Vec<String> = std::fs::read_dir(user_dir())
+        .map(|r| r.flatten().filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().into_owned())).collect())
+        .unwrap_or_default();
+    user.retain(|n| !is_bundled(n) && user_dir().join(format!("{n}.cottheme")).exists());
+    user.sort();
+    names.extend(user);
+    names
+}
+
+/// The theme's JSON: the user's file if there is one, else the bundled one.
+pub fn json_for(name: &str) -> Option<String> {
+    std::fs::read_to_string(user_dir().join(format!("{name}.cottheme")))
+        .ok()
+        .or_else(|| BUNDLED.iter().find(|(n, _)| *n == name).map(|(_, j)| j.to_string()))
+}
+
+/// Saves a theme as a user file and re-installs its colour scheme.
+pub fn save_user(name: &str, json: &str) {
+    let _ = std::fs::create_dir_all(user_dir());
+    let _ = std::fs::write(user_dir().join(format!("{name}.cottheme")), json);
+    install();
+}
+
+pub fn delete_user(name: &str) {
+    let _ = std::fs::remove_file(user_dir().join(format!("{name}.cottheme")));
+    let _ = std::fs::remove_file(gtk::glib::user_data_dir().join("proza").join("styles").join(format!("{}.xml", scheme_id(name))));
+    install();
+}
+
 /// The dark (or light) counterpart CotEditor switches to when the system appearance changes.
 pub fn counterpart(name: &str, dark: bool) -> String {
+    if crate::settings::get().pin_theme_appearance {
+        return name.to_string();
+    }
     let base = name.trim_end_matches(" (Dark)");
     let candidate = if dark { format!("{base} (Dark)") } else { base.to_string() };
-    if BUNDLED.iter().any(|(n, _)| *n == candidate) {
+    if all_names().contains(&candidate) {
         candidate
     } else {
         name.to_string()
@@ -81,8 +130,8 @@ pub struct EditorColors {
 }
 
 pub fn editor_colors(name: &str) -> Option<EditorColors> {
-    let json = BUNDLED.iter().find(|(n, _)| *n == name)?.1;
-    let t: Value = serde_json::from_str(json).ok()?;
+    let json = json_for(name)?;
+    let t: Value = serde_json::from_str(&json).ok()?;
     let bg = color(&t, "background").unwrap_or_else(|| "#ffffff".into());
     let system = t.get("selection").and_then(|s| s.get("usesSystemSetting")).and_then(Value::as_bool).unwrap_or(false);
     let highlight_system = t.get("highlight").and_then(|s| s.get("usesSystemSetting")).and_then(Value::as_bool).unwrap_or(true);
@@ -178,16 +227,20 @@ fn scheme_xml(name: &str, json: &str) -> Option<String> {
 pub fn install() -> PathBuf {
     let dir = gtk::glib::user_data_dir().join("proza").join("styles");
     let _ = std::fs::create_dir_all(&dir);
-    for (name, json) in BUNDLED {
-        if let Some(xml) = scheme_xml(name, json) {
-            let path = dir.join(format!("{}.xml", scheme_id(name)));
+    for name in all_names() {
+        let Some(json) = json_for(&name) else { continue };
+        if let Some(xml) = scheme_xml(&name, &json) {
+            let path = dir.join(format!("{}.xml", scheme_id(&name)));
             if std::fs::read_to_string(&path).ok().as_deref() != Some(xml.as_str()) {
                 let _ = std::fs::write(&path, xml);
             }
         }
     }
     let sm = sourceview5::StyleSchemeManager::default();
-    sm.append_search_path(dir.to_str().unwrap_or_default());
+    let path = dir.to_string_lossy().into_owned();
+    if !sm.search_path().iter().any(|p| p.as_str() == path) {
+        sm.append_search_path(&path);
+    }
     sm.force_rescan();
     dir
 }

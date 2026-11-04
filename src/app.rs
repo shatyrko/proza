@@ -29,6 +29,15 @@ const CSS: &str = "
 .outline-badge.mark { background: transparent; color: #ff453a; font-size: 1em; }
 .outline-menu { background: transparent; }
 .file-preview { padding: 24px; }
+.opaque-bars .status-bar, .opaque-bars .navigation-bar { background: @headerbar_bg_color; }
+.settings-pane { margin: 20px 24px 16px 24px; }
+.settings-pane .row-label { color: alpha(currentColor, 0.85); }
+.settings-pane .subtitle { font-size: 0.85em; color: alpha(currentColor, 0.6); }
+.settings-tabs button { padding: 4px 8px; min-width: 64px; }
+.settings-tabs button label { font-size: 0.85em; }
+.settings-list { border: 1px solid alpha(currentColor, 0.15); border-radius: 7px; }
+.settings-list-bar { border-top: 1px solid alpha(currentColor, 0.15); padding: 2px; }
+.shortcut-recorder { font-family: monospace; min-width: 110px; }
 .file-browser-side { background: alpha(currentColor, 0.03); }
 .character-glyph { font-family: serif; font-size: 48pt; }
 .code-point-chip { border: 1px solid alpha(currentColor, 0.3); border-radius: 4px; padding: 0 4px; }
@@ -46,6 +55,11 @@ pub fn startup() {
     sourceview5::init();
     crate::theme::install();
     crate::scripts::watch();
+    adw::StyleManager::default().set_color_scheme(match crate::settings::get().appearance.as_str() {
+        "light" => adw::ColorScheme::ForceLight,
+        "dark" => adw::ColorScheme::ForceDark,
+        _ => adw::ColorScheme::Default,
+    });
     install_icons();
     install_languages();
     let css = gtk::CssProvider::new();
@@ -230,8 +244,26 @@ pub fn install_actions(app: &adw::Application) {
     });
     app.add_action(&clear);
 
+    apply_shortcuts();
+}
+
+/// The shortcuts of a command: the user's (Settings ▸ Shortcuts) or the default.
+pub fn accels_for(action: &str) -> Vec<String> {
+    if let Some(custom) = crate::settings::get().shortcuts.get(action) {
+        return custom.clone();
+    }
+    crate::menu::accels().into_iter().find(|(a, _)| *a == action).map(|(_, k)| k.iter().map(|s| s.to_string()).collect()).unwrap_or_default()
+}
+
+/// Default shortcuts with the user's changes on top.
+pub fn apply_shortcuts() {
+    let Some(app) = gio::Application::default().and_downcast::<gtk::Application>() else { return };
     for (action, accels) in crate::menu::accels() {
         app.set_accels_for_action(action, accels);
+    }
+    for (action, keys) in crate::settings::get().shortcuts {
+        let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+        app.set_accels_for_action(&action, &refs);
     }
 }
 

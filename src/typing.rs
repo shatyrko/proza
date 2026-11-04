@@ -33,13 +33,18 @@ pub fn attach(w: &Rc<DocWindow>, view: &sourceview5::View) {
     let weak = Rc::downgrade(w);
     keys.connect_key_pressed(move |_, key, _, state| {
         let Some(w) = weak.upgrade() else { return glib::Propagation::Proceed };
+        let mode = settings::mode_for(&w.doc.borrow().syntax);
         if state.intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
-            || !settings::mode_for(&w.doc.borrow().syntax).auto_close
+            || !(mode.auto_close || mode.smart_quotes || mode.smart_dashes)
             || !w.view().is_editable()
         {
             return glib::Propagation::Proceed;
         }
-        let handled = if key == gdk::Key::BackSpace { delete_pair(&w) } else { key.to_unicode().is_some_and(|c| typed(&w, c)) };
+        let handled = if key == gdk::Key::BackSpace {
+            mode.auto_close && delete_pair(&w)
+        } else {
+            key.to_unicode().is_some_and(|c| smart(&w, c, &mode) || (mode.auto_close && typed(&w, c)))
+        };
         if handled {
             glib::Propagation::Stop
         } else {
@@ -82,6 +87,39 @@ fn pop_auto_closer(w: &DocWindow) {
     if let Some(m) = w.auto_closers.borrow_mut().pop() {
         w.buffer.delete_mark(&m);
     }
+}
+
+/// Mode ▸ Smart quotes (curly quotes as typed) and Smart dashes ("--" becomes "—").
+fn smart(w: &DocWindow, c: char, mode: &settings::Mode) -> bool {
+    let b = &w.buffer;
+    if b.has_selection() {
+        return false;
+    }
+    let cursor = b.iter_at_mark(&b.get_insert());
+    let mut before = cursor;
+    let prev = if before.backward_char() { Some(before.char()) } else { None };
+    if mode.smart_quotes && (c == '"' || c == '\'') {
+        let opening = prev.is_none_or(|p| p.is_whitespace() || "([{<“‘".contains(p));
+        let q = match (c, opening) {
+            ('"', true) => '“',
+            ('"', false) => '”',
+            (_, true) => '‘',
+            _ => '’',
+        };
+        b.begin_user_action();
+        b.insert_at_cursor(&q.to_string());
+        b.end_user_action();
+        return true;
+    }
+    if mode.smart_dashes && c == '-' && prev == Some('-') {
+        b.begin_user_action();
+        let mut end = cursor;
+        b.delete(&mut before, &mut end);
+        b.insert_at_cursor("—");
+        b.end_user_action();
+        return true;
+    }
+    false
 }
 
 fn typed(w: &DocWindow, c: char) -> bool {
@@ -182,7 +220,8 @@ pub fn selection_changed(w: &Rc<DocWindow>) {
         return;
     }
     let weak = Rc::downgrade(w);
-    let id = glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+    let delay = (settings::get().instance_delay.clamp(0.0, 10.0) * 1000.0) as u64;
+    let id = glib::timeout_add_local_once(std::time::Duration::from_millis(delay), move || {
         if let Some(w) = weak.upgrade() {
             w.instance_id.borrow_mut().take();
             highlight_instances(&w);

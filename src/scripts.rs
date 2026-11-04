@@ -365,8 +365,16 @@ fn console() -> (adw::Window, gtk::TextView) {
     (win, view)
 }
 
+/// The Console floats with the front document window (like CotEditor's utility panel).
+fn present_console(win: &adw::Window) {
+    if let Some(front) = gio::Application::default().and_downcast::<gtk::Application>().and_then(|a| a.windows().into_iter().find(|w| w.is::<adw::ApplicationWindow>())) {
+        win.set_transient_for(Some(&front));
+    }
+    win.present();
+}
+
 pub fn show_console() {
-    console().0.present();
+    present_console(&console().0);
 }
 
 /// Adds an entry ("[date] title" then the message, monospaced and indented) and shows the Console.
@@ -380,7 +388,7 @@ pub fn log(title: &str, message: &str) {
     b.insert_with_tags_by_name(&mut end, &format!("{message}\n"), &["message"]);
     let mark = b.create_mark(None, &b.end_iter(), false);
     view.scroll_mark_onscreen(&mark);
-    win.present();
+    present_console(&win);
 }
 
 #[cfg(test)]

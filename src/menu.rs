@@ -330,3 +330,26 @@ pub fn accels() -> Vec<(&'static str, &'static [&'static str])> {
     }
     out
 }
+
+/// The commands whose shortcut can be changed (Settings ▸ Shortcuts), by top-level menu. Dynamic lists and
+/// parametrised items (tab widths, transformations…) are left out, as CotEditor leaves out its dynamic items.
+pub fn customizable() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
+    let menus: &[(&str, &[&[&[Item]]])] = &[
+        ("Proza", &[APP]),
+        ("File", &[FILE]),
+        ("Edit", &[EDIT, EDIT_SELECT, EDIT_REST, EDIT_SUBSTITUTIONS]),
+        ("Format", &[FORMAT_TOP, FORMAT_FONT, FORMAT_TABS, FORMAT_TOGGLES, FORMAT_WRAP, FORMAT_LOCK]),
+        ("View", &[VIEW_INSPECTOR, VIEW_SIDEBAR, VIEW]),
+        ("Text", &[TEXT_COMMENT, TEXT_INDENT, TEXT_SURROUND, TEXT_TRIM, TEXT_LINES, TEXT_END]),
+        ("Find", &[FIND]),
+        ("Window", &[WINDOW]),
+        ("Help", &[HELP]),
+    ];
+    menus
+        .iter()
+        .map(|(title, groups)| {
+            let items = groups.iter().flat_map(|g| g.iter()).flat_map(|sec| sec.iter()).filter(|(a, _, _)| !a.contains("::")).map(|(a, l, _)| (*a, *l)).collect();
+            (*title, items)
+        })
+        .collect()
+}

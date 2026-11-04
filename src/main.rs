@@ -22,6 +22,7 @@ use adw::prelude::*;
 
 const APP_ID: &str = "dev.alecsh.Proza";
 
+
 fn main() -> gtk::glib::ExitCode {
     let app = adw::Application::builder()
         .application_id(APP_ID)
@@ -37,7 +38,12 @@ fn main() -> gtk::glib::ExitCode {
             return;
         }
         if app::restore_backups(app) == 0 {
-            app::new_document(app);
+            // Settings ▸ General "When nothing else is open"
+            match settings::get().nothing_open.as_str() {
+                "open" => app.activate_action("open", None),
+                "none" => {}
+                _ => app::new_document(app),
+            }
         }
     });
     app.connect_open(|app, files, _| {

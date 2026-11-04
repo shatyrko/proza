@@ -123,7 +123,9 @@ fn flat(b: &impl IsA<gtk::Widget>) {
 impl DocWindow {
     pub fn new(app: &adw::Application) -> Rc<Self> {
         let s = settings::get();
-        let win = adw::ApplicationWindow::builder().application(app).default_width(640).default_height(720).build();
+        let width = if s.window_width > 0 { s.window_width as i32 } else { 640 };
+        let height = if s.window_height > 0 { s.window_height as i32 } else { 720 };
+        let win = adw::ApplicationWindow::builder().application(app).default_width(width).default_height(height).build();
         win.add_css_class("proza-window");
         // the font stylesheet is per window: each window gets its own class to scope it
         let cls = format!("proza-w{}", NEXT_ID.with(|n| n.replace(n.get() + 1)));
@@ -353,7 +355,7 @@ impl DocWindow {
         crate::inspector::attach(&me);
         me.fill_dynamic_menus();
         me.apply_view_state();
-        me.set_syntax("");
+        me.set_syntax(&settings::get().default_syntax);
         me.connect_buffer();
         me.update_document_labels();
         me.update_status_now();
@@ -402,13 +404,32 @@ impl DocWindow {
             .and_then(|c| c.selection.map(|bg| (bg, c.text)))
             .map(|(bg, fg)| format!(".{} .proza-editor text selection {{ background-color: {bg}; color: {fg}; }}", self.cls))
             .unwrap_or_default();
+        // ligatures per font type (Settings ▸ Appearance); editor opacity makes the text background see-through
+        let ligatures = if vs.mono { s.mono_ligatures } else { s.font_ligatures };
+        let features = if ligatures { "" } else { " font-feature-settings: \"liga\" 0, \"calt\" 0;" };
+        let opacity = if s.editor_opacity < 0.999 {
+            let bg = colors_background(&vs.theme, dark);
+            format!(
+                ".{cls} .proza-editor, .{cls} .proza-editor text, .{cls} .proza-editor gutter {{ background-color: alpha({bg}, {o:.2}); }}\n\
+                 window.{cls} {{ background-color: transparent; }}",
+                cls = self.cls,
+                o = s.editor_opacity.clamp(0.2, 1.0)
+            )
+        } else {
+            String::new()
+        };
         self.css.load_from_string(&format!(
-            ".{cls} .proza-editor {{ font-family: \"{family}\"; font-size: {size:.1}pt; line-height: {lh}; }}\n\
-             .{cls} .proza-editor gutter {{ font-family: \"{family}\"; font-size: {gsize:.1}pt; }}\n{selection}",
+            ".{cls} .proza-editor {{ font-family: \"{family}\"; font-size: {size:.1}pt; line-height: {lh};{features} }}\n\
+             .{cls} .proza-editor gutter {{ font-family: \"{family}\"; font-size: {gsize:.1}pt; }}\n{selection}\n{opacity}",
             cls = self.cls,
             lh = s.line_height,
             gsize = size * 0.9
         ));
+        if s.opaque_bars {
+            self.win.add_css_class("opaque-bars");
+        } else {
+            self.win.remove_css_class("opaque-bars");
+        }
         for e in self.editors.borrow().iter() {
             let v = &e.view;
             v.set_wrap_mode(if vs.wrap { gtk::WrapMode::WordChar } else { gtk::WrapMode::None });
@@ -419,17 +440,56 @@ impl DocWindow {
             v.set_insert_spaces_instead_of_tabs(vs.soft_tabs);
             v.set_highlight_current_line(s.highlight_current_line);
             v.set_editable(!self.doc.borrow().read_only);
+            v.set_right_margin_position(s.page_guide_column);
+            v.set_indent_on_tab(s.indent_with_tab_key);
+            v.set_auto_indent(s.auto_indent);
+            v.set_direction(if s.writing_direction == "rtl" { gtk::TextDirection::Rtl } else { gtk::TextDirection::Ltr });
+            // overscroll: blank space after the last line, a share of the visible height
+            let height = v.parent().map(|p| p.height()).unwrap_or(0);
+            v.set_bottom_margin(6 + (s.overscroll.clamp(0.0, 1.0) * height.max(0) as f64) as i32);
+            // which invisibles are drawn (Settings ▸ Window)
+            let mut types = sourceview5::SpaceTypeFlags::NONE;
+            if s.invisible_newline {
+                types |= sourceview5::SpaceTypeFlags::NEWLINE;
+            }
+            if s.invisible_tab {
+                types |= sourceview5::SpaceTypeFlags::TAB;
+            }
+            if s.invisible_space {
+                types |= sourceview5::SpaceTypeFlags::SPACE;
+            }
+            if s.invisible_other_whitespace {
+                types |= sourceview5::SpaceTypeFlags::NBSP;
+            }
             let drawer = v.space_drawer();
             drawer.set_types_for_locations(sourceview5::SpaceLocationFlags::ALL, sourceview5::SpaceTypeFlags::NONE);
-            drawer.set_types_for_locations(
-                sourceview5::SpaceLocationFlags::ALL,
-                sourceview5::SpaceTypeFlags::NEWLINE | sourceview5::SpaceTypeFlags::TAB | sourceview5::SpaceTypeFlags::NBSP,
-            );
+            drawer.set_types_for_locations(sourceview5::SpaceLocationFlags::ALL, types);
             drawer.set_enable_matrix(vs.invisibles);
         }
         drop(vs);
         self.apply_theme();
         self.sync_toggle_states();
+    }
+
+    /// Settings changed in the Settings window: everything that depends on them is applied again.
+    pub fn settings_changed(self: &Rc<Self>) {
+        let s = settings::get();
+        self.status_bar.set_visible(s.show_status_bar);
+        for e in self.editors.borrow().iter() {
+            e.nav.set_visible(s.show_navigation_bar);
+        }
+        let syntax = self.doc.borrow().syntax.clone();
+        self.set_syntax(&syntax);
+        self.apply_view_state();
+        self.fill_dynamic_menus_again();
+        self.update_status_now();
+    }
+
+    fn fill_dynamic_menus_again(&self) {
+        for m in [&self.dynm.line_endings, &self.dynm.syntaxes, &self.dynm.themes] {
+            m.remove_all();
+        }
+        self.fill_dynamic_menus();
     }
 
     fn apply_theme(&self) {
@@ -559,7 +619,8 @@ impl DocWindow {
         d.syntaxes.append_section(None, &all);
         // themes
         let t = gio::Menu::new();
-        for (name, _) in crate::theme::BUNDLED {
+        for name in crate::theme::all_names() {
+            let name = name.as_str();
             let it = gio::MenuItem::new(Some(name), None);
             it.set_action_and_target_value(Some("win.theme"), Some(&name.to_variant()));
             t.append_item(&it);
@@ -961,7 +1022,7 @@ impl DocWindow {
         self.status_id.replace(Some(id));
     }
 
-    fn update_status_now(&self) {
+    pub fn update_status_now(&self) {
         let s = settings::get();
         let b = &self.buffer;
         let text = b.text(&b.start_iter(), &b.end_iter(), false);
@@ -1254,7 +1315,7 @@ impl DocWindow {
             let (tabs, spaces) = dec.text.lines().fold((0, 0), |(t, sp), l| {
                 (t + l.starts_with('\t') as usize, sp + l.starts_with("  ") as usize)
             });
-            if tabs + spaces > 0 {
+            if tabs + spaces > 0 && settings::get().detect_indent {
                 self.vs.borrow_mut().soft_tabs = spaces > tabs;
                 self.apply_view_state();
             }
@@ -1272,6 +1333,9 @@ impl DocWindow {
     }
 
     fn warn_inconsistent_endings(self: &Rc<Self>) {
+        if settings::get().suppress_inconsistent_endings {
+            return;
+        }
         let ending = self.doc.borrow().ending;
         let dlg = adw::AlertDialog::new(
             Some("The document has inconsistent line endings."),
@@ -1303,13 +1367,40 @@ impl DocWindow {
             }
             let Some(me) = weak.upgrade() else { return };
             let Ok((bytes, _)) = f.load_contents(gio::Cancellable::NONE) else { return };
-            // CotEditor's default "Update to modified version": silent, keeps the cursor line; compared byte for
-            // byte, so our own saves never count
+            // compared byte for byte, so our own saves never count
             if me.doc.borrow().disk_bytes.as_deref() == Some(&bytes[..]) {
                 return;
             }
             let enc = me.doc.borrow().encoding.clone();
-            me.load_file(f, Some(&enc));
+            // Settings ▸ General "When document is changed by another application"
+            match settings::get().external_change.as_str() {
+                "keep" => {
+                    me.doc.borrow_mut().disk_bytes = Some(bytes.to_vec());
+                }
+                "ask" => {
+                    let name = f.basename().map(|p| p.display().to_string()).unwrap_or_default();
+                    let dlg = adw::AlertDialog::new(
+                        Some(&format!("The file “{name}” has been modified by another application.")),
+                        Some("Do you want to keep Proza’s edition or update to the modified edition?"),
+                    );
+                    dlg.add_responses(&[("keep", "Keep Proza’s Edition"), ("update", "Update")]);
+                    dlg.set_default_response(Some("update"));
+                    let (weak, f, bytes) = (Rc::downgrade(&me), f.clone(), bytes.to_vec());
+                    dlg.connect_response(None, move |_, r| {
+                        let Some(me) = weak.upgrade() else { return };
+                        if r == "update" {
+                            me.load_file(&f, Some(&enc));
+                        } else {
+                            me.doc.borrow_mut().disk_bytes = Some(bytes.clone());
+                        }
+                    });
+                    dlg.present(Some(&me.win));
+                }
+                // CotEditor's default: silent, keeps the cursor line
+                _ => {
+                    me.load_file(f, Some(&enc));
+                }
+            }
         });
         self.monitor.replace(Some(mon));
     }
@@ -1476,6 +1567,28 @@ fn matching_brace(at: &gtk::TextIter) -> Option<gtk::TextIter> {
         }
     }
     None
+}
+
+/// The editor background of a theme (for the editor opacity).
+fn colors_background(theme: &str, dark: bool) -> String {
+    let name = crate::theme::counterpart(theme, dark);
+    crate::theme::json_for(&name)
+        .and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok())
+        .and_then(|t| t.get("background")?.get("color")?.as_str().map(|c| c[..7.min(c.len())].to_string()))
+        .unwrap_or_else(|| "#ffffff".into())
+}
+
+/// Applies changed settings to every open window and the app.
+pub fn settings_changed() {
+    let s = settings::get();
+    adw::StyleManager::default().set_color_scheme(match s.appearance.as_str() {
+        "light" => adw::ColorScheme::ForceLight,
+        "dark" => adw::ColorScheme::ForceDark,
+        _ => adw::ColorScheme::Default,
+    });
+    for w in all() {
+        w.settings_changed();
+    }
 }
 
 pub fn count_lines(text: &str) -> usize {
