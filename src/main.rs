@@ -11,6 +11,7 @@ mod settings;
 mod textcmd;
 mod theme;
 mod typing;
+mod unicode;
 mod window;
 
 use adw::prelude::*;

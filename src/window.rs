@@ -68,6 +68,7 @@ pub struct DocWindow {
     pub active_editor: Cell<usize>,
     pub outline: RefCell<Vec<crate::outline::Item>>,
     pub outline_id: RefCell<Option<glib::SourceId>>,
+    pub inspector: RefCell<Option<Rc<crate::inspector::Inspector>>>,
     pub doc: RefCell<DocState>,
     pub vs: RefCell<ViewState>,
     title: gtk::Label,
@@ -209,7 +210,7 @@ impl DocWindow {
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.append(&editors_box);
         content.append(&status_bar);
-        let inspector = crate::inspector::placeholder();
+        let inspector = gtk::Box::new(gtk::Orientation::Vertical, 0); // replaced by inspector::attach
         let split = adw::OverlaySplitView::builder()
             .content(&content)
             .sidebar(&inspector)
@@ -239,6 +240,7 @@ impl DocWindow {
             active_editor: Cell::new(0),
             outline: RefCell::new(Vec::new()),
             outline_id: RefCell::new(None),
+            inspector: RefCell::new(None),
             doc: RefCell::new(DocState {
                 file: None,
                 encoding: Encoding { iana: s.encoding.clone(), bom: s.encoding_bom },
@@ -328,6 +330,7 @@ impl DocWindow {
             });
         }
         me.install_actions();
+        crate::inspector::attach(&me);
         me.fill_dynamic_menus();
         me.apply_view_state();
         me.set_syntax("");
@@ -755,6 +758,7 @@ impl DocWindow {
             }
             let pane = v.parse().unwrap_or(0);
             settings::update(|s| s.inspector_pane = pane);
+            crate::inspector::show_pane(me, pane as usize);
         });
         self.add_toggle("line-numbers", s.show_line_numbers, |me, on| {
             me.vs.borrow_mut().line_numbers = on;
@@ -806,6 +810,7 @@ impl DocWindow {
             if let Some(me) = weak.upgrade() {
                 me.schedule_status();
                 me.schedule_outline(false);
+                crate::inspector::schedule_warnings(&me);
                 crate::typing::selection_changed(&me);
                 if !me.loading.get() {
                     me.schedule_autosave();
@@ -957,6 +962,8 @@ impl DocWindow {
         }
         self.counts.set_markup(&parts.join("   "));
         self.update_outline_nav();
+        crate::inspector::update_document(self);
+        crate::inspector::select_current_outline(self);
     }
 
     fn update_size(&self) {
@@ -990,6 +997,7 @@ impl DocWindow {
         self.fill_encodings_menu();
         self.update_size();
         self.update_title();
+        crate::inspector::format_changed(self);
     }
 
     // ------------------------------------------------------------------ line endings & encodings

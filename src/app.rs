@@ -28,6 +28,9 @@ const CSS: &str = "
 .outline-badge.heading { background: #5856d6; }
 .outline-badge.mark { background: transparent; color: #ff453a; font-size: 1em; }
 .outline-menu { background: transparent; }
+.character-glyph { font-family: serif; font-size: 48pt; }
+.code-point-chip { border: 1px solid alpha(currentColor, 0.3); border-radius: 4px; padding: 0 4px; }
+.inspector expander title { padding: 2px 0; }
 .outline-menu row { padding: 3px 6px; border-radius: 6px; }
 .find-panel .find-field-frame { border: 1px solid alpha(currentColor, 0.15); border-radius: 7px; }
 .find-panel .find-field-frame:focus-within { outline: 2px solid alpha(@accent_color, 0.5); outline-offset: 1px; }

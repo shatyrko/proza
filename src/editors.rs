@@ -40,6 +40,7 @@ pub fn install(w: &Rc<DocWindow>) {
     });
     w.add_action("focus-next-editor", |w| w.focus_editor_step(1));
     w.add_action("focus-previous-editor", |w| w.focus_editor_step(-1));
+    w.add_action("inspect-character", crate::inspector::inspect_character);
     w.add_action("outline-previous", |w| w.jump_outline(false));
     w.add_action("outline-next", |w| w.jump_outline(true));
     w.add_action("open-outline", |w| {

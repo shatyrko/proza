@@ -3,3 +3,6 @@ The *.cottheme files in this folder are the built-in themes of CotEditor
 used unchanged under the Apache License, Version 2.0
 (https://www.apache.org/licenses/LICENSE-2.0). Proza converts them to
 GtkSourceView colour schemes at start-up.
+
+data/unicode/blocks.txt and data/unicode/age.txt are derived from the Unicode Character Database 17.0
+(Blocks.txt, DerivedAge.txt), © Unicode, Inc., under the Unicode License v3 (https://www.unicode.org/license.txt).
