@@ -73,6 +73,7 @@ impl DocWindow {
         view.set_right_margin_position(settings::get().page_guide_column);
         let scroller = gtk::ScrolledWindow::builder().child(&view).vexpand(true).hexpand(true).build();
         crate::typing::attach(self, &view);
+        crate::snippets::attach_drop(self, &view);
 
         let nav = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         nav.add_css_class("navigation-bar");

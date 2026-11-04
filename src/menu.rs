@@ -176,6 +176,7 @@ pub struct Dynamic {
     pub syntaxes: gio::Menu,
     pub themes: gio::Menu,
     pub scripts: gio::Menu,
+    pub snippets: gio::Menu,
     pub recent: gio::Menu,
 }
 
@@ -187,6 +188,7 @@ pub fn build() -> (gio::Menu, Dynamic) {
         syntaxes: gio::Menu::new(),
         themes: gio::Menu::new(),
         scripts: gio::Menu::new(),
+        snippets: gio::Menu::new(),
         recent: gio::Menu::new(),
     };
     let root = gio::Menu::new();
@@ -264,6 +266,9 @@ pub fn build() -> (gio::Menu, Dynamic) {
     root.append_submenu(Some("View"), &view);
 
     let text = gio::Menu::new();
+    let snippet_section = gio::Menu::new();
+    snippet_section.append_submenu(Some("Insert Snippet"), &dynm.snippets);
+    text.append_section(None, &snippet_section);
     let s = gio::Menu::new();
     for (name, items) in [("Comment", TEXT_COMMENT), ("Indentation", TEXT_INDENT), ("Surround Selection With", TEXT_SURROUND)] {
         let m = gio::Menu::new();

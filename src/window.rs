@@ -91,7 +91,7 @@ pub struct DocWindow {
     pub split: adw::OverlaySplitView,
     css: gtk::CssProvider,
     pub actions: gio::SimpleActionGroup,
-    dynm: crate::menu::Dynamic,
+    pub dynm: crate::menu::Dynamic,
     autosave_id: RefCell<Option<glib::SourceId>>,
     status_id: RefCell<Option<glib::SourceId>>,
     monitor: RefCell<Option<gio::FileMonitor>>,
@@ -450,8 +450,19 @@ impl DocWindow {
         self.buffer.set_language(lang.as_ref());
         let name = lang.as_ref().map(|l| l.name().to_string()).unwrap_or_else(|| "Plain Text".into());
         self.syntax_label.set_label(&name);
-        let mono = !GENERAL_SYNTAXES.contains(&id);
+        // the mode (Settings ▸ Mode) decides the font type, auto-closing, completion and indentation
+        let mode = settings::mode_for(id);
+        let mono = mode.monospaced;
         self.doc.borrow_mut().syntax = id.to_string();
+        if mode.custom_indent {
+            let mut vs = self.vs.borrow_mut();
+            vs.soft_tabs = mode.soft_tabs;
+            vs.tab_width = mode.tab_width;
+        }
+        for e in self.editors.borrow().iter() {
+            crate::typing::set_suggest(&e.view, mode.suggest);
+        }
+        crate::snippets::fill_menu(self);
         if self.vs.borrow().mono != mono {
             self.vs.borrow_mut().mono = mono;
             self.apply_view_state();
@@ -487,8 +498,15 @@ impl DocWindow {
 
     // ------------------------------------------------------------------ dynamic menus
 
+    /// The Script menu, after the scripts folder changed.
+    pub fn refill_scripts(&self) {
+        crate::scripts::fill_menu(&self.dynm.scripts);
+    }
+
     fn fill_dynamic_menus(&self) {
         let d = &self.dynm;
+        crate::scripts::fill_menu(&d.scripts);
+        crate::snippets::fill_menu(self);
         // line endings
         let main = gio::Menu::new();
         for e in [LineEnding::Lf, LineEnding::Cr, LineEnding::CrLf] {
@@ -807,6 +825,8 @@ impl DocWindow {
         crate::find::install(self);
         crate::editors::install(self);
         crate::filebrowser::install(self);
+        crate::snippets::install(self);
+        self.add_action("console", |_| crate::scripts::show_console());
     }
 
     fn zoom(&self, factor: f64) {

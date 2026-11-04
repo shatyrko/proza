@@ -2,7 +2,89 @@
 
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+
+/// Per-mode editor behaviour (Settings ▸ Mode): "General" (prose syntaxes), "Code", or a syntax id.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Mode {
+    pub monospaced: bool,
+    pub smart_quotes: bool,
+    pub smart_dashes: bool,
+    pub auto_close: bool,
+    pub spell_check: bool,
+    pub complete_standard: bool,
+    pub complete_document: bool,
+    pub complete_syntax: bool,
+    pub suggest: bool,
+    pub custom_indent: bool,
+    pub soft_tabs: bool,
+    pub tab_width: u32,
+}
+
+impl Default for Mode {
+    fn default() -> Self {
+        Mode::general()
+    }
+}
+
+impl Mode {
+    pub fn general() -> Mode {
+        Mode {
+            monospaced: false,
+            smart_quotes: false,
+            smart_dashes: false,
+            auto_close: false,
+            spell_check: true,
+            complete_standard: true,
+            complete_document: true,
+            complete_syntax: false,
+            suggest: false,
+            custom_indent: false,
+            soft_tabs: false,
+            tab_width: 4,
+        }
+    }
+
+    pub fn code() -> Mode {
+        Mode { monospaced: true, auto_close: true, spell_check: false, complete_standard: false, complete_syntax: true, ..Mode::general() }
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Snippet {
+    /// A syntax id, or "" for all syntaxes.
+    pub scope: String,
+    pub name: String,
+    /// GTK accelerator, or "".
+    pub key: String,
+    pub format: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct FileDrop {
+    pub scope: String,
+    /// Comma-separated, "" = all.
+    pub extensions: String,
+    pub format: String,
+    pub description: String,
+}
+
+/// CotEditor's factory file-drop rules.
+pub fn default_file_drops() -> Vec<FileDrop> {
+    let rule = |scope: &str, ext: &str, format: &str| FileDrop { scope: scope.into(), extensions: ext.into(), format: format.into(), description: String::new() };
+    vec![
+        rule("markdown", "jpg, jpeg, gif, png", "![<<<FILENAME-NOSUFFIX>>>](<<<RELATIVE-PATH>>>)"),
+        rule("markdown", "", "[<<<FILENAME-NOSUFFIX>>>](<<<RELATIVE-PATH>>>)"),
+        rule("html", "jpg, jpeg, gif, png", "<img src=\"<<<RELATIVE-PATH>>>\" alt=\"<<<FILENAME-NOSUFFIX>>>\" title=\"<<<FILENAME-NOSUFFIX>>>\" width=\"<<<IMAGEWIDTH>>>\" height=\"<<<IMAGEHEIGHT>>>\" />"),
+        rule("html", "js", "<script type=\"text/javascript\" src=\"<<<RELATIVE-PATH>>>\"></script>"),
+        rule("html", "html, htm, php", "<a href=\"<<<RELATIVE-PATH>>>\" title=\"<<<FILENAME-NOSUFFIX>>>\"></a>"),
+        rule("css", "", "url(\"<<<RELATIVE-PATH>>>\")"),
+    ]
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -68,6 +150,46 @@ pub struct Settings {
     pub replace_history: Vec<String>,
     pub inspector_pane: u32,
     pub file_browser_hidden: bool,
+    // General (more)
+    pub nothing_open: String,    // "new" | "open" | "none"
+    pub external_change: String, // "keep" | "ask" | "update"
+    pub suppress_inconsistent_endings: bool,
+    // Appearance (more)
+    pub font_antialias: bool,
+    pub font_ligatures: bool,
+    pub mono_antialias: bool,
+    pub mono_ligatures: bool,
+    pub pin_theme_appearance: bool,
+    pub opaque_bars: bool,
+    pub editor_opacity: f64,
+    // Window (more)
+    pub window_width: u32, // 0 = Auto
+    pub window_height: u32,
+    pub invisible_newline: bool,
+    pub invisible_tab: bool,
+    pub invisible_space: bool,
+    pub invisible_other_whitespace: bool,
+    pub invisible_control: bool,
+    pub hanging_indent: bool,
+    pub hanging_indent_width: u32,
+    pub writing_direction: String, // "ltr" | "rtl"
+    pub overscroll: f64,
+    // Edit (more)
+    pub detect_indent: bool,
+    pub indent_with_tab_key: bool,
+    pub trim_whitespace_only_lines: bool,
+    pub link_urls: bool,
+    pub instance_delay: f64,
+    // Mode, Format, Snippets, Shortcuts, Integration
+    pub modes: BTreeMap<String, Mode>,
+    pub default_syntax: String,
+    pub snippets: Vec<Snippet>,
+    pub file_drops: Vec<FileDrop>,
+    pub shortcuts: BTreeMap<String, Vec<String>>,
+    pub rmate: bool,
+    pub rmate_port: u16,
+    pub settings_pane: u32,
+    pub console_zoom: f64,
 }
 
 impl Default for Settings {
@@ -131,6 +253,41 @@ impl Default for Settings {
             replace_history: Vec::new(),
             inspector_pane: 0,
             file_browser_hidden: false,
+            nothing_open: "new".into(),
+            external_change: "update".into(),
+            suppress_inconsistent_endings: false,
+            font_antialias: true,
+            font_ligatures: true,
+            mono_antialias: true,
+            mono_ligatures: false,
+            pin_theme_appearance: false,
+            opaque_bars: false,
+            editor_opacity: 1.0,
+            window_width: 0,
+            window_height: 0,
+            invisible_newline: true,
+            invisible_tab: true,
+            invisible_space: false,
+            invisible_other_whitespace: true,
+            invisible_control: true,
+            hanging_indent: true,
+            hanging_indent_width: 0,
+            writing_direction: "ltr".into(),
+            overscroll: 0.0,
+            detect_indent: true,
+            indent_with_tab_key: false,
+            trim_whitespace_only_lines: false,
+            link_urls: false,
+            instance_delay: 0.5,
+            modes: BTreeMap::from([("General".to_string(), Mode::general()), ("Code".to_string(), Mode::code())]),
+            default_syntax: String::new(),
+            snippets: Vec::new(),
+            file_drops: default_file_drops(),
+            shortcuts: BTreeMap::new(),
+            rmate: false,
+            rmate_port: 52698,
+            settings_pane: 0,
+            console_zoom: 1.0,
         }
     }
 }
@@ -175,4 +332,23 @@ pub fn update(f: impl FnOnce(&mut Settings)) {
 /// The candidate encodings for detection, in priority order (separators dropped).
 pub fn candidate_encodings() -> Vec<String> {
     get().encodings.into_iter().filter(|e| e != "-").collect()
+}
+
+/// The mode for a syntax: its own mode if there is one, else General (prose syntaxes) or Code.
+pub fn mode_for(syntax: &str) -> Mode {
+    let s = get();
+    if let Some(m) = s.modes.get(syntax) {
+        return m.clone();
+    }
+    let kind = if crate::window::GENERAL_SYNTAXES.contains(&syntax) { "General" } else { "Code" };
+    s.modes.get(kind).cloned().unwrap_or_else(|| if kind == "General" { Mode::general() } else { Mode::code() })
+}
+
+/// "General" or "Code".
+pub fn kind_of(syntax: &str) -> &'static str {
+    if crate::window::GENERAL_SYNTAXES.contains(&syntax) {
+        "General"
+    } else {
+        "Code"
+    }
 }

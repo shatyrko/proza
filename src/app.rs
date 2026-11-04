@@ -45,6 +45,7 @@ const CSS: &str = "
 pub fn startup() {
     sourceview5::init();
     crate::theme::install();
+    crate::scripts::watch();
     install_icons();
     install_languages();
     let css = gtk::CssProvider::new();
@@ -161,6 +162,13 @@ pub fn install_actions(app: &adw::Application) {
             }
         });
     });
+    add("open-scripts-folder", |_| {
+        let dir = crate::scripts::folder();
+        let _ = std::fs::create_dir_all(&dir);
+        gtk::FileLauncher::new(Some(&gio::File::for_path(&dir))).launch(None::<&gtk::Window>, gio::Cancellable::NONE, |_| {});
+    });
+    add("settings", |_| crate::settingswin::show(None));
+    add("edit-snippets", |_| crate::settingswin::show(Some(6)));
     add("quit", |app| {
         for w in window::all() {
             w.win.close();
@@ -193,6 +201,16 @@ pub fn install_actions(app: &adw::Application) {
     add("report-issue", |_| {
         gtk::UriLauncher::new("https://github.com/shatyrko/proza/issues").launch(None::<&gtk::Window>, gio::Cancellable::NONE, |_| {});
     });
+    let run = gio::SimpleAction::new("run-script", Some(glib::VariantTy::STRING));
+    let app3 = app.clone();
+    run.connect_activate(move |_, v| {
+        if let Some(path) = v.and_then(|v| v.get::<String>()) {
+            // the target is the front document window
+            let target = app3.active_window().and_then(|aw| window::all().into_iter().find(|w| w.win.upcast_ref::<gtk::Window>() == &aw)).or_else(|| window::all().into_iter().next());
+            crate::scripts::run(std::path::Path::new(&path), target);
+        }
+    });
+    app.add_action(&run);
     let recent = gio::SimpleAction::new("open-recent", Some(glib::VariantTy::STRING));
     let app2 = app.clone();
     recent.connect_activate(move |_, v| {

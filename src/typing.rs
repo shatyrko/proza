@@ -34,7 +34,7 @@ pub fn attach(w: &Rc<DocWindow>, view: &sourceview5::View) {
     keys.connect_key_pressed(move |_, key, _, state| {
         let Some(w) = weak.upgrade() else { return glib::Propagation::Proceed };
         if state.intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK)
-            || !settings::get().balance_symbols
+            || !settings::mode_for(&w.doc.borrow().syntax).auto_close
             || !w.view().is_editable()
         {
             return glib::Propagation::Proceed;
@@ -53,6 +53,22 @@ pub fn attach(w: &Rc<DocWindow>, view: &sourceview5::View) {
     let completion = view.completion();
     completion.add_provider(&words);
     completion.block_interactive();
+    unsafe { view.set_data("proza-suggest", false) };
+}
+
+/// Completion pops up while typing only when the mode says "Suggest completions while typing".
+pub fn set_suggest(view: &sourceview5::View, on: bool) {
+    let current = unsafe { view.data::<bool>("proza-suggest").map(|p| *p.as_ref()).unwrap_or(false) };
+    if current == on {
+        return;
+    }
+    let completion = view.completion();
+    if on {
+        completion.unblock_interactive();
+    } else {
+        completion.block_interactive();
+    }
+    unsafe { view.set_data("proza-suggest", on) };
 }
 
 /// The caret sits right before the innermost closer Proza inserted itself.
