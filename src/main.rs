@@ -7,6 +7,7 @@ mod menu;
 mod settings;
 mod textcmd;
 mod theme;
+mod typing;
 mod window;
 
 use adw::prelude::*;

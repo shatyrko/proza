@@ -15,7 +15,7 @@ use std::rc::Rc;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// General (prose) syntaxes use the standard font, everything else the monospaced one (CotEditor's syntax kinds).
-const GENERAL_SYNTAXES: &[&str] = &["", "markdown", "latex", "bibtex", "rst", "textile", "bbcode"];
+pub const GENERAL_SYNTAXES: &[&str] = &["", "markdown", "latex", "bibtex", "rst", "textile", "bbcode"];
 const AUTOSAVE_DELAY: u32 = 5;
 
 /// Per-document state.
@@ -60,6 +60,9 @@ pub struct DocWindow {
     title: gtk::Label,
     cls: String,
     brace_id: RefCell<Option<glib::SourceId>>,
+    pub instance_id: RefCell<Option<glib::SourceId>>,
+    /// Closers inserted by symbol balancing, innermost last (each mark sits right before its closer).
+    pub auto_closers: RefCell<Vec<gtk::TextMark>>,
     syntax_label: gtk::Label,
     counts: gtk::Label,
     size: gtk::Label,
@@ -242,6 +245,8 @@ impl DocWindow {
             title,
             cls,
             brace_id: RefCell::new(None),
+            instance_id: RefCell::new(None),
+            auto_closers: RefCell::new(Vec::new()),
             syntax_label,
             counts,
             size,
@@ -335,6 +340,7 @@ impl DocWindow {
         view.set_right_margin(4);
         view.set_right_margin_position(settings::get().page_guide_column);
         let scroller = gtk::ScrolledWindow::builder().child(&view).vexpand(true).hexpand(true).build();
+        crate::typing::attach(self, &view);
 
         let nav = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         nav.add_css_class("navigation-bar");
@@ -390,7 +396,11 @@ impl DocWindow {
         // the selection: CotEditor's "system" themes keep the system's selection colour (here the user's GTK
         // stylesheet); the others bring their own
         let dark = adw::StyleManager::default().is_dark();
-        let selection = crate::theme::editor_colors(&crate::theme::counterpart(&vs.theme, dark))
+        let colors = crate::theme::editor_colors(&crate::theme::counterpart(&vs.theme, dark));
+        if let Some(c) = &colors {
+            crate::typing::instance_tag(&self.buffer).set_background(Some(&c.instance));
+        }
+        let selection = colors
             .and_then(|c| c.selection.map(|bg| (bg, c.text)))
             .map(|(bg, fg)| format!(".{} .proza-editor text selection {{ background-color: {bg}; color: {fg}; }}", self.cls))
             .unwrap_or_default();
@@ -812,6 +822,7 @@ impl DocWindow {
         self.buffer.connect_changed(move |_| {
             if let Some(me) = weak.upgrade() {
                 me.schedule_status();
+                crate::typing::selection_changed(&me);
                 if !me.loading.get() {
                     me.schedule_autosave();
                 }
@@ -824,6 +835,8 @@ impl DocWindow {
                     me.schedule_status();
                     // a cursor move sets "insert" first and "selection_bound" second: only then is it not a selection
                     me.flash_brace();
+                    crate::typing::cursor_moved(&me);
+                    crate::typing::selection_changed(&me);
                 }
             }
         });

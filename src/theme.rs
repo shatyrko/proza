@@ -73,6 +73,9 @@ fn is_dark(bg: &str) -> bool {
 /// The colours Proza draws itself (the selection), for the window stylesheet.
 pub struct EditorColors {
     pub text: String,
+    /// Background of the other occurrences of a selected word: the theme's highlight colour (the system's find
+    /// colour, yellow, when it uses that) at 30 % over the background.
+    pub instance: String,
     /// `None`: the theme uses the system's selection colour (an accent tint).
     pub selection: Option<String>,
 }
@@ -82,7 +85,10 @@ pub fn editor_colors(name: &str) -> Option<EditorColors> {
     let t: Value = serde_json::from_str(json).ok()?;
     let bg = color(&t, "background").unwrap_or_else(|| "#ffffff".into());
     let system = t.get("selection").and_then(|s| s.get("usesSystemSetting")).and_then(Value::as_bool).unwrap_or(false);
+    let highlight_system = t.get("highlight").and_then(|s| s.get("usesSystemSetting")).and_then(Value::as_bool).unwrap_or(true);
+    let highlight = if highlight_system { None } else { color(&t, "highlight") }.unwrap_or_else(|| "#ffd60a".into());
     Some(EditorColors {
+        instance: flatten(&format!("{}4d", &highlight[..7.min(highlight.len())]), &bg),
         text: color(&t, "text").map(|c| c[..7.min(c.len())].to_string()).unwrap_or_else(|| "#000000".into()),
         selection: if system { None } else { color(&t, "selection").map(|c| flatten(&c, &bg)) },
     })
