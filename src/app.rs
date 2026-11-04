@@ -18,6 +18,17 @@ const CSS: &str = "
 .proza-window .status-bar button { min-height: 20px; padding: 0 6px; font-weight: normal; }
 .proza-window .syntax-popup > button { border-radius: 999px; padding: 2px 12px; min-height: 30px; }
 .proza-window headerbar .circular { min-width: 34px; min-height: 34px; }
+.proza-window .navigation-bar .rotated image { -gtk-icon-transform: rotate(-90deg); }
+.outline-badge { min-width: 15px; min-height: 15px; border-radius: 4px; font-size: 0.72em; font-weight: 800;
+    color: white; padding: 0 1px; }
+.outline-badge.container { background: #3478f6; }
+.outline-badge.value { background: #30b04f; }
+.outline-badge.function { background: #f28c1b; }
+.outline-badge.title { background: #2aa5a5; }
+.outline-badge.heading { background: #5856d6; }
+.outline-badge.mark { background: transparent; color: #ff453a; font-size: 1em; }
+.outline-menu { background: transparent; }
+.outline-menu row { padding: 3px 6px; border-radius: 6px; }
 .find-panel .find-field-frame { border: 1px solid alpha(currentColor, 0.15); border-radius: 7px; }
 .find-panel .find-field-frame:focus-within { outline: 2px solid alpha(@accent_color, 0.5); outline-offset: 1px; }
 .find-panel .find-field, .find-panel .find-field text { background: transparent; }

@@ -8,3 +8,6 @@ pub fn placeholder() -> gtk::Box {
     b.set_size_request(240, -1);
     b
 }
+
+/// The document's outline changed (the Outline pane follows it).
+pub fn outline_changed(_w: &std::rc::Rc<crate::window::DocWindow>) {}

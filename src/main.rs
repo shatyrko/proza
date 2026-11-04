@@ -2,9 +2,11 @@
 
 mod app;
 mod document;
+mod editors;
 mod find;
 mod inspector;
 mod menu;
+mod outline;
 mod settings;
 mod textcmd;
 mod theme;

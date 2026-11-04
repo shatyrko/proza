@@ -48,13 +48,26 @@ pub struct EditorPane {
     pub view: sourceview5::View,
     pub nav: gtk::Box,
     pub close_btn: gtk::Button,
+    pub divider: gtk::Separator,
     pub outline_box: gtk::Box,
+    pub prev_btn: gtk::Button,
+    pub next_btn: gtk::Button,
+    pub outline_btn: gtk::MenuButton,
+    pub outline_label: gtk::Label,
+    pub outline_list: gtk::ListBox,
+    pub split_btn: gtk::Button,
 }
 
 pub struct DocWindow {
     pub win: adw::ApplicationWindow,
     pub buffer: sourceview5::Buffer,
     pub editors: RefCell<Vec<EditorPane>>,
+    /// Holds the editor panes (in nested panes when split).
+    pub editors_holder: gtk::Box,
+    /// The editor that last had keyboard focus.
+    pub active_editor: Cell<usize>,
+    pub outline: RefCell<Vec<crate::outline::Item>>,
+    pub outline_id: RefCell<Option<glib::SourceId>>,
     pub doc: RefCell<DocState>,
     pub vs: RefCell<ViewState>,
     title: gtk::Label,
@@ -222,6 +235,10 @@ impl DocWindow {
             win: win.clone(),
             buffer: buffer.clone(),
             editors: RefCell::new(Vec::new()),
+            editors_holder: editors_box.clone(),
+            active_editor: Cell::new(0),
+            outline: RefCell::new(Vec::new()),
+            outline_id: RefCell::new(None),
             doc: RefCell::new(DocState {
                 file: None,
                 encoding: Encoding { iana: s.encoding.clone(), bom: s.encoding_bom },
@@ -337,61 +354,10 @@ impl DocWindow {
 
     // ------------------------------------------------------------------ editor pane
 
-    fn make_editor(self: &Rc<Self>) -> EditorPane {
-        let view = sourceview5::View::with_buffer(&self.buffer);
-        view.add_css_class("proza-editor");
-        view.set_show_line_numbers(true);
-        view.set_auto_indent(true);
-        view.set_smart_home_end(sourceview5::SmartHomeEndType::Before);
-        view.set_top_margin(6);
-        view.set_bottom_margin(6);
-        view.set_left_margin(12);
-        view.set_right_margin(4);
-        view.set_right_margin_position(settings::get().page_guide_column);
-        let scroller = gtk::ScrolledWindow::builder().child(&view).vexpand(true).hexpand(true).build();
-        crate::typing::attach(self, &view);
-
-        let nav = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-        nav.add_css_class("navigation-bar");
-        let close_btn = gtk::Button::builder().icon_name("window-close-symbolic").tooltip_text("Close split editor").build();
-        flat(&close_btn);
-        close_btn.set_opacity(0.0);
-        close_btn.set_sensitive(false);
-        nav.append(&close_btn);
-        let outline_box = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-        nav.append(&outline_box);
-        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        spacer.set_hexpand(true);
-        nav.append(&spacer);
-        let split_btn = gtk::Button::builder()
-            .icon_name("proza-split-add-symbolic")
-            .tooltip_text("Split editor")
-            .action_name("win.split-editor")
-            .build();
-        flat(&split_btn);
-        split_btn.set_focusable(false);
-        close_btn.set_focusable(false);
-        nav.append(&split_btn);
-
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        root.append(&nav);
-        root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        root.append(&scroller);
-        nav.set_visible(settings::get().show_navigation_bar);
-
-        let weak = Rc::downgrade(self);
-        view.connect_has_focus_notify(move |_| {
-            if let Some(me) = weak.upgrade() {
-                me.schedule_status();
-            }
-        });
-        EditorPane { root, view, nav, close_btn, outline_box }
-    }
-
-    /// The editor with keyboard focus (or the first one).
+    /// The editor with keyboard focus, else the one that had it last.
     pub fn view(&self) -> sourceview5::View {
         let eds = self.editors.borrow();
-        eds.iter().find(|e| e.view.has_focus()).unwrap_or(&eds[0]).view.clone()
+        eds.iter().find(|e| e.view.has_focus()).or_else(|| eds.get(self.active_editor.get())).unwrap_or(&eds[0]).view.clone()
     }
 
     // ------------------------------------------------------------------ appearance
@@ -815,6 +781,7 @@ impl DocWindow {
         });
         crate::textcmd::install(self);
         crate::find::install(self);
+        crate::editors::install(self);
     }
 
     fn zoom(&self, factor: f64) {
@@ -829,9 +796,16 @@ impl DocWindow {
 
     fn connect_buffer(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
+        self.buffer.connect_language_notify(move |_| {
+            if let Some(me) = weak.upgrade() {
+                me.schedule_outline(true);
+            }
+        });
+        let weak = Rc::downgrade(self);
         self.buffer.connect_changed(move |_| {
             if let Some(me) = weak.upgrade() {
                 me.schedule_status();
+                me.schedule_outline(false);
                 crate::typing::selection_changed(&me);
                 if !me.loading.get() {
                     me.schedule_autosave();
@@ -927,7 +901,7 @@ impl DocWindow {
         tag.set_priority(self.buffer.tag_table().size() - 1);
     }
 
-    fn schedule_status(self: &Rc<Self>) {
+    pub fn schedule_status(self: &Rc<Self>) {
         if self.status_id.borrow().is_some() {
             return;
         }
@@ -982,6 +956,7 @@ impl DocWindow {
             parts.push(item("Column", group(b.text(&ls, &sel_s, false).graphemes(true).count())));
         }
         self.counts.set_markup(&parts.join("   "));
+        self.update_outline_nav();
     }
 
     fn update_size(&self) {

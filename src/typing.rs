@@ -186,7 +186,7 @@ fn highlight_instances(w: &DocWindow) {
         return;
     }
     let mut before = s;
-    let mut after = e;
+    let after = e;
     if (before.backward_char() && is_word(before.char())) || (!after.is_end() && is_word(after.char())) {
         return;
     }
