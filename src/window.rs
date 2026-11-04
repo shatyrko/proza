@@ -69,6 +69,10 @@ pub struct DocWindow {
     pub outline: RefCell<Vec<crate::outline::Item>>,
     pub outline_id: RefCell<Option<glib::SourceId>>,
     pub inspector: RefCell<Option<Rc<crate::inspector::Inspector>>>,
+    /// Folder windows: the opened folder, the file browser side and the text/preview stack.
+    pub folder: RefCell<Option<gio::File>>,
+    pub outer: adw::OverlaySplitView,
+    pub content_stack: gtk::Stack,
     pub doc: RefCell<DocState>,
     pub vs: RefCell<ViewState>,
     title: gtk::Label,
@@ -210,9 +214,12 @@ impl DocWindow {
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.append(&editors_box);
         content.append(&status_bar);
+        // the text, or (folder windows) a preview of a file that isn't text
+        let content_stack = gtk::Stack::new();
+        content_stack.add_named(&content, Some("text"));
         let inspector = gtk::Box::new(gtk::Orientation::Vertical, 0); // replaced by inspector::attach
         let split = adw::OverlaySplitView::builder()
-            .content(&content)
+            .content(&content_stack)
             .sidebar(&inspector)
             .sidebar_position(gtk::PackType::End)
             .show_sidebar(false)
@@ -221,7 +228,17 @@ impl DocWindow {
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
-        toolbar.set_content(Some(&split));
+        // folder windows: the file browser on the start side
+        let outer = adw::OverlaySplitView::builder()
+            .content(&split)
+            .sidebar(&gtk::Box::new(gtk::Orientation::Vertical, 0))
+            .sidebar_position(gtk::PackType::Start)
+            .show_sidebar(false)
+            .enable_show_gesture(false)
+            .enable_hide_gesture(false)
+            .min_sidebar_width(200.0)
+            .build();
+        toolbar.set_content(Some(&outer));
         win.set_content(Some(&toolbar));
 
         let css = gtk::CssProvider::new();
@@ -241,6 +258,9 @@ impl DocWindow {
             outline: RefCell::new(Vec::new()),
             outline_id: RefCell::new(None),
             inspector: RefCell::new(None),
+            folder: RefCell::new(None),
+            outer,
+            content_stack,
             doc: RefCell::new(DocState {
                 file: None,
                 encoding: Encoding { iana: s.encoding.clone(), bom: s.encoding_bom },
@@ -786,6 +806,7 @@ impl DocWindow {
         crate::textcmd::install(self);
         crate::find::install(self);
         crate::editors::install(self);
+        crate::filebrowser::install(self);
     }
 
     fn zoom(&self, factor: f64) {
@@ -974,9 +995,16 @@ impl DocWindow {
         self.size.set_label(&text);
     }
 
-    fn update_title(&self) {
+    /// A title for something that isn't the document (a preview in a folder window).
+    pub fn show_title(&self, name: &str) {
+        self.title.set_label(name);
+        self.win.set_title(Some(name));
+    }
+
+    pub fn update_title(&self) {
         let d = self.doc.borrow();
-        let name = d.file.as_ref().and_then(|f| f.basename()).map(|p| p.display().to_string()).unwrap_or_else(|| "Untitled".into());
+        let folder_name = || self.folder.borrow().as_ref().and_then(|f| f.basename()).map(|p| p.display().to_string());
+        let name = d.file.as_ref().and_then(|f| f.basename()).map(|p| p.display().to_string()).or_else(folder_name).unwrap_or_else(|| "Untitled".into());
         let edited = self.buffer.is_modified() && !(settings::get().auto_save && d.file.is_some());
         self.title.set_label(&if edited { format!("{name} •") } else { name.clone() });
         self.win.set_title(Some(&name));
@@ -1144,6 +1172,29 @@ impl DocWindow {
         self.update_status_now();
     }
 
+    /// Folder windows: the shown document goes away (trashed, moved to its own window, or a preview is shown).
+    pub fn close_document(&self) {
+        if let Some(m) = self.monitor.borrow_mut().take() {
+            m.cancel();
+        }
+        self.loading.set(true);
+        self.buffer.set_text("");
+        self.loading.set(false);
+        self.buffer.set_modified(false);
+        {
+            let mut d = self.doc.borrow_mut();
+            d.file = None;
+            d.disk_bytes = None;
+        }
+        self.update_document_labels();
+    }
+
+    /// The syntax for a file of this name and the current text.
+    pub fn guess_syntax_for(&self, file: &gio::File) -> String {
+        let name = file.basename().map(|p| p.display().to_string()).unwrap_or_default();
+        self.guess_syntax(&name, &self.text())
+    }
+
     /// Untouched untitled window (CotEditor replaces it with the first file opened).
     pub fn is_blank(&self) -> bool {
         self.doc.borrow().file.is_none() && self.buffer.char_count() == 0 && !self.buffer.can_undo()
@@ -1246,7 +1297,7 @@ impl DocWindow {
     // ------------------------------------------------------------------ saving
 
     /// Saves right away when auto-save applies (after a line-ending or encoding change).
-    fn save_if_auto(&self) {
+    pub fn save_if_auto(&self) {
         if settings::get().auto_save && self.doc.borrow().file.is_some() && !self.doc.borrow().read_only {
             self.write_file();
         }

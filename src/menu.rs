@@ -31,7 +31,7 @@ fn labelled(label: &str, items: &[Item]) -> gio::Menu {
 
 pub const FILE: &[&[Item]] = &[
     &[("app.new", "New", &["<Ctrl>n"]), ("app.new-window", "New Window", &["<Ctrl><Shift>n"])],
-    &[("app.open", "Open…", &["<Ctrl>o"])],
+    &[("app.open", "Open…", &["<Ctrl>o"]), ("app.open-folder", "Open Folder…", &["<Ctrl><Shift>o"])],
     &[("win.close", "Close", &["<Ctrl>w"]), ("win.save", "Save", &["<Ctrl>s"]),
       ("win.save-as", "Save As…", &["<Ctrl><Shift>s"]), ("win.revert", "Revert to Saved", &[])],
     &[("win.show-in-files", "Show in Files", &[]), ("win.copy-path", "Copy File Path", &[])],
@@ -195,6 +195,8 @@ pub fn build() -> (gio::Menu, Dynamic) {
     add_sections(&file, &FILE[..1]);
     let open = gio::Menu::new();
     open.append(Some("Open…"), Some("app.open"));
+    // GTK's file dialog picks files or a folder, not both like CotEditor's Open…
+    open.append(Some("Open Folder…"), Some("app.open-folder"));
     open.append_submenu(Some("Open Recent"), &dynm.recent);
     file.append_section(None, &open);
     add_sections(&file, &FILE[2..]);

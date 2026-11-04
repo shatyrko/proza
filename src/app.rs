@@ -28,6 +28,8 @@ const CSS: &str = "
 .outline-badge.heading { background: #5856d6; }
 .outline-badge.mark { background: transparent; color: #ff453a; font-size: 1em; }
 .outline-menu { background: transparent; }
+.file-preview { padding: 24px; }
+.file-browser-side { background: alpha(currentColor, 0.03); }
 .character-glyph { font-family: serif; font-size: 48pt; }
 .code-point-chip { border: 1px solid alpha(currentColor, 0.3); border-radius: 4px; padding: 0 4px; }
 .inspector expander title { padding: 2px 0; }
@@ -102,6 +104,10 @@ fn target_window(app: &adw::Application) -> Rc<DocWindow> {
 }
 
 pub fn open_file(app: &adw::Application, file: &gio::File) {
+    if file.query_file_type(gio::FileQueryInfoFlags::NONE, gio::Cancellable::NONE) == gio::FileType::Directory {
+        crate::filebrowser::open_folder(app, file);
+        return;
+    }
     // already open: bring that window forward
     if let Some(w) = window::all().into_iter().find(|w| w.doc.borrow().file.as_ref().is_some_and(|f| f.equal(file))) {
         w.win.present();
@@ -143,6 +149,15 @@ pub fn install_actions(app: &adw::Application) {
                 for f in files.iter::<gio::File>().flatten() {
                     open_file(&app2, &f);
                 }
+            }
+        });
+    });
+    add("open-folder", |app| {
+        let dialog = gtk::FileDialog::builder().title("Open Folder").modal(true).build();
+        let app2 = app.clone();
+        dialog.select_folder(app.active_window().as_ref(), gio::Cancellable::NONE, move |res| {
+            if let Ok(folder) = res {
+                crate::filebrowser::open_folder(&app2, &folder);
             }
         });
     });

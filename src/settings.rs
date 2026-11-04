@@ -67,6 +67,7 @@ pub struct Settings {
     pub find_history: Vec<String>,
     pub replace_history: Vec<String>,
     pub inspector_pane: u32,
+    pub file_browser_hidden: bool,
 }
 
 impl Default for Settings {
@@ -129,6 +130,7 @@ impl Default for Settings {
             find_history: Vec::new(),
             replace_history: Vec::new(),
             inspector_pane: 0,
+            file_browser_hidden: false,
         }
     }
 }

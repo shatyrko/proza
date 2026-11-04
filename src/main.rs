@@ -3,6 +3,7 @@
 mod app;
 mod document;
 mod editors;
+mod filebrowser;
 mod find;
 mod inspector;
 mod menu;
