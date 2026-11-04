@@ -1,0 +1,255 @@
+// Application level: start-up, app actions (New, Open, Settings, About, Quit), recent files, crash backups.
+
+use crate::window::{self, DocWindow};
+use adw::prelude::*;
+use gtk::{gdk, gio, glib};
+use std::path::PathBuf;
+use std::rc::Rc;
+
+const CSS: &str = "
+.proza-window .navigation-bar { min-height: 24px; padding: 0 4px; }
+.proza-window .navigation-bar button { min-height: 20px; min-width: 20px; padding: 0 2px; }
+.proza-window .navigation-bar .outline-popup { font-weight: 600; }
+.proza-window .status-bar { min-height: 25px; padding: 0 6px 0 10px; font-size: 0.85em;
+    border-top: 1px solid alpha(currentColor, 0.12); }
+.proza-window .status-bar separator { margin: 5px 4px; }
+.proza-window .status-bar button { min-height: 20px; padding: 0 6px; font-weight: normal; }
+.proza-window .syntax-popup > button { border-radius: 999px; padding: 2px 12px; min-height: 30px; }
+.proza-window headerbar .circular { min-width: 34px; min-height: 34px; }
+";
+
+/// Puts the bundled themes and icons in place and loads the stylesheet. Runs once at start-up.
+pub fn startup() {
+    sourceview5::init();
+    crate::theme::install();
+    install_icons();
+    let css = gtk::CssProvider::new();
+    css.load_from_string(CSS);
+    gtk::style_context_add_provider_for_display(
+        &gdk::Display::default().expect("display"),
+        &css,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+}
+
+macro_rules! icons {
+    ($($name:literal),* $(,)?) => {
+        &[$(($name, include_str!(concat!("../data/icons/", $name, ".svg")))),*]
+    };
+}
+const ICONS: &[(&str, &str)] = icons![
+    "proza-updown-symbolic", "proza-info-symbolic", "proza-split-add-symbolic", "proza-not-editable-symbolic",
+    "proza-sidebar-symbolic",
+];
+
+fn install_icons() {
+    let dir = glib::user_data_dir().join("proza").join("icons");
+    let actions = dir.join("hicolor/scalable/actions");
+    let _ = std::fs::create_dir_all(&actions);
+    for (name, svg) in ICONS {
+        let path = actions.join(format!("{name}.svg"));
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(svg) {
+            let _ = std::fs::write(&path, svg);
+        }
+    }
+    gtk::IconTheme::for_display(&gdk::Display::default().expect("display")).add_search_path(&dir);
+}
+
+/// The window a newly opened file goes to: the untouched blank window if there is one, else a new one.
+fn target_window(app: &adw::Application) -> Rc<DocWindow> {
+    window::all().into_iter().find(|w| w.is_blank()).unwrap_or_else(|| DocWindow::new(app))
+}
+
+pub fn open_file(app: &adw::Application, file: &gio::File) {
+    // already open: bring that window forward
+    if let Some(w) = window::all().into_iter().find(|w| w.doc.borrow().file.as_ref().is_some_and(|f| f.equal(file))) {
+        w.win.present();
+        return;
+    }
+    let w = target_window(app);
+    if w.load_file(file, None) {
+        w.win.present();
+    } else {
+        let name = file.basename().map(|p| p.display().to_string()).unwrap_or_default();
+        let dlg = adw::AlertDialog::new(
+            Some(&format!("The file “{name}” couldn’t be opened.")),
+            Some("It may not be a text file, or its text encoding isn’t in the encoding list."),
+        );
+        dlg.add_response("ok", "OK");
+        w.win.present();
+        dlg.present(Some(&w.win));
+    }
+}
+
+pub fn new_document(app: &adw::Application) {
+    DocWindow::new(app).win.present();
+}
+
+pub fn install_actions(app: &adw::Application) {
+    let add = |name: &str, f: fn(&adw::Application)| {
+        let a = gio::SimpleAction::new(name, None);
+        let app2 = app.clone();
+        a.connect_activate(move |_, _| f(&app2));
+        app.add_action(&a);
+    };
+    add("new", new_document);
+    add("new-window", new_document);
+    add("open", |app| {
+        let dialog = gtk::FileDialog::builder().title("Open").modal(true).build();
+        let app2 = app.clone();
+        dialog.open_multiple(app.active_window().as_ref(), gio::Cancellable::NONE, move |res| {
+            if let Ok(files) = res {
+                for f in files.iter::<gio::File>().flatten() {
+                    open_file(&app2, &f);
+                }
+            }
+        });
+    });
+    add("quit", |app| {
+        for w in window::all() {
+            w.win.close();
+        }
+        if window::all().is_empty() {
+            app.quit();
+        }
+    });
+    add("about", |app| {
+        let about = adw::AboutDialog::builder()
+            .application_name("Proza")
+            .application_icon("text-x-generic")
+            .version(env!("CARGO_PKG_VERSION"))
+            .comments("A lightweight plain-text editor, modelled on CotEditor.")
+            .website("https://github.com/shatyrko/proza")
+            .license_type(gtk::License::Gpl30)
+            .developer_name("Oleksii Shatyrko")
+            .build();
+        about.add_legal_section(
+            "CotEditor themes",
+            Some("© 2014-2026 1024jp and contributors"),
+            gtk::License::Apache20,
+            None,
+        );
+        about.present(app.active_window().as_ref());
+    });
+    add("website", |_| {
+        gtk::UriLauncher::new("https://github.com/shatyrko/proza").launch(None::<&gtk::Window>, gio::Cancellable::NONE, |_| {});
+    });
+    add("report-issue", |_| {
+        gtk::UriLauncher::new("https://github.com/shatyrko/proza/issues").launch(None::<&gtk::Window>, gio::Cancellable::NONE, |_| {});
+    });
+    let recent = gio::SimpleAction::new("open-recent", Some(glib::VariantTy::STRING));
+    let app2 = app.clone();
+    recent.connect_activate(move |_, v| {
+        if let Some(uri) = v.and_then(|v| v.get::<String>()) {
+            open_file(&app2, &gio::File::for_uri(&uri));
+        }
+    });
+    app.add_action(&recent);
+    let clear = gio::SimpleAction::new("clear-recent", None);
+    clear.connect_activate(|_, _| {
+        let rm = gtk::RecentManager::default();
+        for item in rm.items() {
+            if item.has_application("Proza") {
+                let _ = rm.remove_item(&item.uri());
+            }
+        }
+    });
+    app.add_action(&clear);
+
+    for (action, accels) in crate::menu::accels() {
+        app.set_accels_for_action(action, accels);
+    }
+}
+
+// ---------------------------------------------------------------- recent files
+
+pub fn add_recent(file: &gio::File) {
+    let data = gtk::RecentData::new(None, None, "text/plain", "Proza", "proza %u", &[], false);
+    gtk::RecentManager::default().add_full(&file.uri(), &data);
+}
+
+/// Open Recent: Proza's recent files (newest first), then Clear Menu.
+pub fn fill_recent(menu: &gio::Menu) {
+    menu.remove_all();
+    let mut items: Vec<gtk::RecentInfo> =
+        gtk::RecentManager::default().items().into_iter().filter(|i| i.has_application("Proza") && i.exists()).collect();
+    items.sort_by_key(|i| std::cmp::Reverse(i.modified().to_unix()));
+    let files = gio::Menu::new();
+    for i in items.iter().take(10) {
+        let it = gio::MenuItem::new(Some(&i.display_name()), None);
+        it.set_action_and_target_value(Some("app.open-recent"), Some(&i.uri().to_variant()));
+        files.append_item(&it);
+    }
+    menu.append_section(None, &files);
+    let clear = gio::Menu::new();
+    clear.append(Some("Clear Menu"), Some("app.clear-recent"));
+    menu.append_section(None, &clear);
+}
+
+pub fn show_in_files(file: &gio::File) {
+    let uri = file.uri().to_string();
+    gio::bus_get(gio::BusType::Session, gio::Cancellable::NONE, move |bus| {
+        if let Ok(bus) = bus {
+            bus.call(
+                Some("org.freedesktop.FileManager1"),
+                "/org/freedesktop/FileManager1",
+                "org.freedesktop.FileManager1",
+                "ShowItems",
+                Some(&(vec![uri], "").to_variant()),
+                None,
+                gio::DBusCallFlags::NONE,
+                -1,
+                gio::Cancellable::NONE,
+                |_| {},
+            );
+        }
+    });
+}
+
+// ---------------------------------------------------------------- crash backups (unsaved, untitled text)
+
+fn backup_dir() -> PathBuf {
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| glib::home_dir().join(".local/state"));
+    state.join("proza").join("backups")
+}
+
+pub fn write_backup(w: &DocWindow) {
+    if w.doc.borrow().file.is_some() || !w.buffer.is_modified() {
+        return;
+    }
+    let dir = backup_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join(format!("{}.txt", w.doc.borrow().backup_id));
+    let text = w.text();
+    if text.is_empty() {
+        let _ = std::fs::remove_file(path);
+    } else {
+        let _ = std::fs::write(path, text);
+    }
+}
+
+pub fn remove_backup(id: &str) {
+    let _ = std::fs::remove_file(backup_dir().join(format!("{id}.txt")));
+}
+
+/// Untitled documents that were not saved when Proza last quit or crashed: reopened as they were.
+/// Returns how many windows were restored.
+pub fn restore_backups(app: &adw::Application) -> usize {
+    let Ok(entries) = std::fs::read_dir(backup_dir()) else { return 0 };
+    let mut n = 0;
+    for e in entries.flatten() {
+        let path = e.path();
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            let w = DocWindow::new(app);
+            w.set_untitled_text(&text);
+            if let Some(stem) = path.file_stem() {
+                w.doc.borrow_mut().backup_id = stem.to_string_lossy().into_owned();
+            }
+            w.win.present();
+            n += 1;
+        }
+    }
+    n
+}

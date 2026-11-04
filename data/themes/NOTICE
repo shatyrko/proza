@@ -1,0 +1,5 @@
+The *.cottheme files in this folder are the built-in themes of CotEditor
+(https://github.com/coteditor/CotEditor), © 2014-2026 1024jp and contributors,
+used unchanged under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0). Proza converts them to
+GtkSourceView colour schemes at start-up.

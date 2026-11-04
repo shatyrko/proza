@@ -1,5 +1,12 @@
 // Proza: a lightweight plain-text editor for Linux, modelled on CotEditor's interface.
 
+mod app;
+mod document;
+mod inspector;
+mod menu;
+mod settings;
+mod textcmd;
+mod theme;
 mod window;
 
 use adw::prelude::*;
@@ -11,13 +18,22 @@ fn main() -> gtk::glib::ExitCode {
         .application_id(APP_ID)
         .flags(gtk::gio::ApplicationFlags::HANDLES_OPEN)
         .build();
-    app.connect_startup(|_| sourceview5::init());   // after GTK is up
-    app.connect_activate(|app| {
-        window::Window::new(app, None).present();
+    app.connect_startup(|app| {
+        app::startup();
+        app::install_actions(app);
     });
-    app.connect_open(|app, files, _hint| {
+    app.connect_activate(|app| {
+        if let Some(w) = app.active_window() {
+            w.present();
+            return;
+        }
+        if app::restore_backups(app) == 0 {
+            app::new_document(app);
+        }
+    });
+    app.connect_open(|app, files, _| {
         for f in files {
-            window::Window::new(app, Some(f.clone())).present();
+            app::open_file(app, f);
         }
     });
     app.run()
