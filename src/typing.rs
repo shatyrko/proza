@@ -47,6 +47,12 @@ pub fn attach(w: &Rc<DocWindow>, view: &sourceview5::View) {
         }
     });
     view.add_controller(keys);
+    // Edit ▸ Complete (F5): words of the document, only on request (CotEditor's automatic completion is off)
+    let words = sourceview5::CompletionWords::new(Some("Document Words"));
+    words.register(&w.buffer);
+    let completion = view.completion();
+    completion.add_provider(&words);
+    completion.block_interactive();
 }
 
 /// The caret sits right before the innermost closer Proza inserted itself.

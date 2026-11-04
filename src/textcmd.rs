@@ -17,6 +17,7 @@ pub fn install(w: &Rc<DocWindow>) {
     w.add_action("select-word", select_word);
     w.add_action("select-enclosing", select_enclosing);
     w.add_action("insert-unicode", insert_unicode);
+    w.add_action("complete", |w| w.view().completion().show());
     w.add_action("straighten-quotes", |w| map_selection(w, false, straighten_quotes));
     w.add_action("replace-quotes", |w| map_selection(w, false, smart_quotes));
     w.add_action("replace-dashes", |w| map_selection(w, false, |s| s.replace("--", "—")));
